@@ -1,0 +1,31 @@
+# {{Project}} impact map: changing X ⇒ consider Y (couplings code analysis can't see).
+# `{{runner}} impact` lists triggered rules; `check` fails unless each companion is changed
+# or acknowledged in the task file. Add rules via a separate reviewed task; each needs a `why`.
+rules:
+  - {id: user-linked-data, when: ["{{schema_glob}}", "{{migrations_glob}}"],
+     consider: [data inventory, erasure/export tests, privacy notice, DPIA if new purpose, store privacy labels],
+     why: privacy promises must stay true}
+  - {id: external-vendor, when: ["{{adapters_glob}}"],
+     consider: [vendor passport (DPA, region, retention, license), data inventory, sub-processor list, cost model, eval baseline],
+     why: vendors receive user data and cost money}
+  - {id: money, when: ["{{billing_glob}}"],
+     consider: [ledger invariant tests, price tables per platform, terms/refund policy, store purchase metadata],
+     why: money must reconcile everywhere}
+  - {id: api-contract, when: ["{{contracts_glob}}"],
+     consider: [regenerated clients, breaking-change check, support window for shipped app versions],
+     why: shipped clients can't update instantly}
+  - {id: security-surface, when: ["{{transport_glob}}", "{{auth_glob}}", ".github/workflows/**"],
+     consider: [threat model + negative tests, security-reviewer, authZ route contract test, headers/CSP],
+     why: every entry point is attack surface}
+  - {id: design-tokens, when: ["design-system/**", "{{ui_tokens_glob}}"],
+     consider: [regenerated tokens, visual snapshot baselines, founder approval for brand changes],
+     why: one brand on every platform}
+  - {id: user-facing-copy, when: ["{{i18n_glob}}"],
+     consider: [voice rules, all locales, store listing copy],
+     why: trust and platform policies depend on wording}
+  - {id: config-and-env, when: [".env.example", "{{config_glob}}", "compose.yaml", "{{runner_file}}", "infra/**"],
+     consider: [env ↔ schema sync, tooling map ↔ portability.md, CI, offline proof, idle cost],
+     why: local and remote differ only by config}
+  - {id: process-and-skills, when: [".claude/skills/**", "CLAUDE.md", "docs/standards/**", "docs/adr/**"],
+     consider: [journal entry, toolkit/playbook, critic review, matching fitness gate in check, generated AGENTS.md copies, founder approval if a rule is relaxed],
+     why: the process is a product too}

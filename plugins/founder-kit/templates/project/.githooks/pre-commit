@@ -1,0 +1,20 @@
+#!/bin/sh
+# founder-kit: scan staged changes for secrets, then run the project's fast gates before every commit (any tool, any person).
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+cd "$(git rev-parse --show-toplevel)" || exit 1
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --redact --no-banner || { echo "fk: gitleaks found what looks like a secret in this commit. Remove it (keep the value in .env), then commit again."; exit 1; }
+else
+  echo "fk: gitleaks not installed; commit not scanned for secrets (see fk doctor)."
+fi
+cfg="$(dirname "$common")/.fk/config.json"
+cmd=""
+if [ -f "$cfg" ] && command -v node >/dev/null 2>&1; then
+  cmd=$(node -e 'try{const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(c.fast_gates||"")}catch(e){}' "$cfg")
+fi
+if [ -z "$cmd" ]; then
+  echo "fk: no fast_gates in .fk/config.json; pre-commit gates skipped."
+  exit 0
+fi
+echo "fk: running fast gates: $cmd"
+sh -c "$cmd" || { echo "fk: fast gates failed. Fix what they report, then commit again (do not use --no-verify)."; exit 1; }

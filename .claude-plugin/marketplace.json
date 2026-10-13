@@ -1,0 +1,18 @@
+{
+  "name": "awesome-founder-kit",
+  "description": "Founder Kit: a founder layer for building products with AI agents on top of oh-my-claudecode.",
+  "owner": {
+    "name": "Founder Kit maintainers"
+  },
+  "allowCrossMarketplaceDependenciesOn": [
+    "omc"
+  ],
+  "plugins": [
+    {
+      "name": "founder-kit",
+      "source": "./plugins/founder-kit",
+      "description": "Founder layer on top of oh-my-claudecode: idea import, kickoff review, decisions as ADRs, project standards in drydock slots, conformance lens, brand system, process journal.",
+      "version": "0.3.0"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "description": "founder-kit light alignment layer: agreement pointers, harm guards, compliance log. Inert without .fk/.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs", "SessionStart"], "timeout": 10 }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs", "SubagentStart"], "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs", "UserPromptSubmit"], "timeout": 10 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|mcp__.*)$",
+        "hooks": [
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs", "PreToolUse"], "timeout": 10 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|mcp__.*)$",
+        "hooks": [
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs", "PostToolUse"], "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
