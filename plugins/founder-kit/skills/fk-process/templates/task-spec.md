@@ -1,7 +1,16 @@
-# <Task title>
-Date: YYYY-MM-DD · Risk: R1|R2|R3 · UI: yes|no · Review status: reviewed | early-unreviewed · OMC plan: <path>
+---
+id: {{id}}
+title: {{title}}
+risk: {{risk}}
+created: {{date}}
+omc: {{omc}}
+acceptance:
+{{acceptance}}
+---
+# {{title}}
+UI: yes|no · Review status: reviewed | early-unreviewed
 
-Project addendum to the OMC plan: only what OMC's plan does not hold. An `early-unreviewed` task carries this banner and may not be called done.
+Created by `fk task new`; closed by `fk task done {{id}}`. Each `AC-n` is one checkable statement. Reviewers write `docs/tasks/{{id}}.review-<n>.md` (format: fk-conformance). Only what OMC's plan does not hold goes below. An `early-unreviewed` task may not be called done.
 
 ## Impact acknowledgements (impact-map.yaml + code-graph or Grep)
 | Rule / symbol | Updated / Not affected because… |
@@ -30,6 +39,6 @@ Project addendum to the OMC plan: only what OMC's plan does not hold. An `early-
 
 ## Evidence and review
 - `<runner> check` / `e2e` / `eval`:
-- Reviewers and resolution:
+- `fk task check {{id}}`:
 
 ## Follow-ups

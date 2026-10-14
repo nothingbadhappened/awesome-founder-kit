@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { findRoot, loadConfig, log, logContext, activeOverride, addOverride, sessionSnapshot, refreshSnapshot, relPath, sanctionedJson, writeJson,
-  protectedClass, shellTool, GUARDS, FAIL_CLOSED, omcLatestCached, omcPlugin, omcStatus, readOmcCache, writeOmcCache, OMC_UPDATE } from './lib.mjs';
+  protectedClass, shellTool, OVERRIDABLE, FAIL_CLOSED, omcLatestCached, omcPlugin, omcStatus, readOmcCache, writeOmcCache, OMC_UPDATE } from './lib.mjs';
 
 const FK_CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'fk.mjs');
 // The plugin's bin/ is on the Bash tool PATH only (not PowerShell's); this line keeps `fk` reachable either way.
@@ -33,7 +33,7 @@ function preToolUse(ctx) {
       continue;
     }
     if (!r) continue;
-    const entry = { event: 'PreToolUse', guard: g.name, decision: r.decision, tool, agent_type: input.agent_type, reason: r.reason };
+    const entry = { event: 'PreToolUse', guard: g.name, decision: r.decision, tool, agent_type: input.agent_type, reason: r.reason, session: input.session_id };
     if ((r.decision === 'deny' || r.decision === 'ask') && !r.noOverride) {
       const o = activeOverride(root, g.name, input.session_id);
       if (o) { log(root, { ...entry, decision: 'allow-override', override: o.reason }); continue; }
@@ -46,7 +46,8 @@ function preToolUse(ctx) {
 }
 const deny = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
 
-function postToolUse({ root, input, tool, ti }) {
+async function postToolUse({ root, input, tool, ti }) {
+  try { (await import('./authorship.mjs')).record(root, input, tool, ti); } catch (e) { log(root, { event: 'PostToolUse', guard: 'authorship', decision: 'allow', error: String(e?.message || e) }); }
   if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(tool)) {
     const rel = relPath(root, ti.file_path || ti.notebook_path || '');
     if (protectedClass(root, rel)) refreshSnapshot(root, [rel]); // sanctioned by PreToolUse
@@ -71,8 +72,8 @@ function directive(root, line, notes, session) {
   const m = /^fk-override[ \t]+(\S+)[ \t]+(\S.*)$/i.exec(line);
   if (m) {
     let guard = m[1].toLowerCase();
-    if (!guard.endsWith('-guard')) guard += '-guard';
-    if (!GUARDS.includes(guard)) return notes.push(`fk: unknown guard "${m[1]}". Known: ${GUARDS.join(', ')}. No override recorded.`);
+    if (!guard.endsWith('-guard') && !OVERRIDABLE.includes(guard)) guard += '-guard';
+    if (!OVERRIDABLE.includes(guard)) return notes.push(`fk: unknown guard "${m[1]}". Known: ${OVERRIDABLE.join(', ')}. No override recorded.`);
     const o = addOverride(root, guard, m[2].trim(), session);
     log(root, { event: 'UserPromptSubmit', guard, decision: 'override-set', reason: o.reason, expires: o.expires, session });
     return notes.push(`fk: founder approved an override of ${guard} until ${o.expires} (reason: ${o.reason}). It is in the kit log (fk audit).`);
@@ -185,7 +186,7 @@ async function main() {
     if (event === 'UserPromptSubmit') extraDirectives = (await loadDir('directives')).map((m) => m.default);
     switch (event) {
       case 'PreToolUse': return out(preToolUse(ctx));
-      case 'PostToolUse': return out(postToolUse(ctx));
+      case 'PostToolUse': return out(await postToolUse(ctx));
       case 'UserPromptSubmit': return out(userPromptSubmit(ctx));
       case 'SubagentStart': {
         const text = pointer(loadConfig(root), input.agent_type);

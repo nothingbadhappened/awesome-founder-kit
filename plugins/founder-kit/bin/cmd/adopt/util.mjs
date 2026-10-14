@@ -28,7 +28,7 @@ export function needRoot() {
 export const slug = (root) => path.basename(root).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
 
 // --flag value | --flag=value; BOOL flags take no value; repeatable flags collect into arrays.
-const BOOL = new Set(['yes', 'purge', 'json', 'new', 'strict', 'no-gitleaks', 'force', 'no-tighten']);
+const BOOL = new Set(['yes', 'purge', 'json', 'new', 'strict', 'no-gitleaks', 'force', 'no-tighten', 'write']);
 export function parseArgs(args) {
   const pos = [], flags = {};
   for (let i = 0; i < args.length; i++) {

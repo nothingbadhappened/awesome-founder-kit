@@ -5,6 +5,7 @@
 import path from 'node:path';
 import { loadConfig, readJson } from '../../hooks/lib.mjs';
 import { say, needRoot, parseArgs, pairs, fkWrite, measure, gitleaks } from './adopt/util.mjs';
+import { logGateRun } from '../../hooks/authorship.mjs';
 
 const FILE = '.fk/baseline.json';
 const USAGE = 'usage: fk baseline record|check [--gate name=cmd]... [--no-gitleaks] [--no-tighten]   (a gate named *cov* is a coverage %, higher is better)';
@@ -51,6 +52,7 @@ export function check(root, flags = {}) {
     else if (delta < -1e-9) { tightened++; next[n] = { ...b, value: g.value }; say(`better   ${n}: ${b.value} -> ${g.value}`); }
     else say(`same     ${n}: ${g.value}`);
   }
+  if (compared) logGateRun(root, { source: 'baseline', ok: !worse, gates: Object.keys(now) });
   if (tightened && !flags['no-tighten']) { fkWrite(root, FILE, { ...base, gates: next, tightened: new Date().toISOString() }); say('fk baseline: improvements locked in; the baseline only moves toward better.'); }
   if (worse) { say(`fk baseline: ${worse} gate(s) got worse than the recorded baseline. New problems must be fixed; old ones may stay.`); process.exitCode = 1; }
   else if (!compared) say('fk baseline: nothing compared with the baseline yet. Name the gate commands with fk config set check "<cmd>", then fk baseline record.');

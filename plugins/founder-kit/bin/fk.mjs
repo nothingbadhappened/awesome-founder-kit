@@ -164,11 +164,34 @@ function untyped(root, rows) {
   return out;
 }
 
-function audit() {
+// Task records (fk task): closed on an override, risk declared below what the change shows, reviews written by
+// implementers, and open tasks whose id already appears in a commit on main/master.
+async function auditTasks(root) {
+  const { readTasks } = await import('../hooks/authorship.mjs');
+  const tasks = Object.entries(readTasks(root).tasks || {});
+  if (!tasks.length) return;
+  const R = ['R0', 'R1', 'R2', 'R3'];
+  const closed = tasks.filter(([, t]) => t.done);
+  const lines = [];
+  for (const [id, t] of closed) if (t.override) lines.push(`${id} was closed without a passing fk task check, on your override (${t.override.reason}).`);
+  for (const [id, t] of closed) {
+    const c = t.last_check;
+    if (c && R.indexOf(c.proposed) > R.indexOf(c.declared)) lines.push(`${id} was declared ${c.declared}, but the change looked like ${c.proposed}.`);
+    for (const i of (c?.invalid || []).filter((x) => /also wrote code|not a reviewer agent/.test(x))) lines.push(`${id}: a review was written by an implementer: ${i}.`);
+  }
+  const main = ['main', 'master'].find((b) => run('git', ['rev-parse', '--verify', '-q', b], { cwd: root, shell: false }).status === 0);
+  const subjects = main ? run('git', ['log', '-n', '1000', '--format=%s', main], { cwd: root, shell: false }).stdout : '';
+  for (const [id] of tasks.filter(([, t]) => !t.done)) if (new RegExp(`\\b${id}\\b`).test(subjects)) lines.push(`${id} is in a commit on ${main} but was never closed with fk task done.`);
+  say(`fk audit: ${tasks.length} tasks (${closed.length} closed).${lines.length ? '' : ' Every closed task passed fk task check.'}`);
+  for (const l of lines) say(`- ${l}`);
+}
+
+async function audit() {
   const root = needRoot();
   const rows = readLog(root);
   const forged = untyped(root, rows);
   if (forged.length) say(`fk audit: NOT typed by you, review: ${forged.join('; ')}. Remove what you did not approve (git checkout -- .fk/<file>).`);
+  await auditTasks(root);
   if (!rows.length) return say('fk audit: nothing logged yet.');
   const count = (pred) => rows.filter(pred).length;
   say(`fk audit: ${rows.length} entries since ${rows[0]?.ts ?? '-'}.`);
@@ -233,19 +256,28 @@ function kickoff(action, quiet = false) {
 }
 
 // ---- config keys agents may set: the sanctioned door; the rest of .fk/ is founder or hook territory ----
-const AGENT_KEYS = ['runner', 'check', 'stack', 'fast_gates', 'protected_extra'];
-function config(sub, key, ...rest) {
+const AGENT_KEYS = ['runner', 'check', 'stack', 'fast_gates', 'protected_extra', 'risk_r3', 'reviewer_extra'];
+async function config(sub, key, ...rest) {
   const root = needRoot();
   const value = rest.join(' ').trim();
   if (sub !== 'set' || !AGENT_KEYS.includes(key) || !value) {
-    say(`usage: fk config set <${AGENT_KEYS.join('|')}> <value>   (protected_extra adds one glob; it never removes)`);
+    say(`usage: fk config set <${AGENT_KEYS.join('|')}> <value>   (protected_extra and risk_r3 add one glob, reviewer_extra one reviewer agent; they never remove)`);
     process.exitCode = 1; return;
+  }
+  if (key === 'reviewer_extra') {
+    const { implementerAgents, agentName } = await import('./cmd/task.mjs');
+    if (!/^[\w.:-]+$/.test(value) || implementerAgents().includes(agentName(value))) {
+      say(`fk: ${value} is not a reviewer agent name (agents that build, such as executor, cannot review).`);
+      process.exitCode = 1; return;
+    }
   }
   const file = path.join(root, '.fk', 'config.json');
   if (!fs.existsSync(file)) { say('fk: run `fk init` first.'); process.exitCode = 1; return; }
   const before = new Set(Object.keys(readSnapshot(root).files));
   const cfg = readJson(file, {});
   if (key === 'protected_extra') cfg.protected_extra = [...new Set([...(cfg.protected_extra || []), value])];
+  else if (key === 'reviewer_extra') cfg.reviewer_extra = [...new Set([...(cfg.reviewer_extra || []), value])];
+  else if (key === 'risk_r3') cfg.risk = { ...(cfg.risk || {}), r3: [...new Set([...(cfg.risk?.r3 || []), value])] };
   else cfg[key] = value;
   writeJson(file, cfg);
   refreshSnapshot(root, ['.fk/config.json', ...listProtected(root).filter((r) => !before.has(r))]);
@@ -303,7 +335,11 @@ const commands = {
   'omc-refresh': () => fetchOmcLatest(), // background refresh started by the SessionStart hook
 };
 // Extra commands live in bin/cmd/<name>.mjs (default export: async (args) => void), so features stay in their own files.
-const extra = cmd && /^[a-z][\w-]*$/.test(cmd) ? path.join(path.dirname(fileURLToPath(import.meta.url)), 'cmd', `${cmd}.mjs`) : '';
+const CMD_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'cmd');
+const extra = cmd && /^[a-z][\w-]*$/.test(cmd) ? path.join(CMD_DIR, `${cmd}.mjs`) : '';
 if (commands[cmd]) commands[cmd]();
 else if (extra && fs.existsSync(extra)) import(pathToFileURL(extra).href).then((m) => m.default(args));
-else say('usage: fk init [--chain] | fk doctor [--hooks] | fk audit | fk config set <key> <value> | fk kickoff protect|release | fk uninstall');
+else {
+  const more = fs.readdirSync(CMD_DIR).filter((n) => n.endsWith('.mjs')).map((n) => `fk ${n.slice(0, -4)}`).sort();
+  say(`usage: fk init [--chain] | fk doctor [--hooks] | fk audit | fk config set <key> <value> | fk kickoff protect|release | fk uninstall\nmore:  ${more.join(' | ')}`);
+}

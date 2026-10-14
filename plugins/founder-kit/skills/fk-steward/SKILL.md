@@ -49,4 +49,4 @@ Then add up to 3 items to OMC's plan (not a separate loop): refactor the worst h
 - Stop maintenance when under 20% of the usage window remains; feature work and a clean commit come first.
 
 ## 6. Weekly and 90-day notes
-The SessionStart note says when the weekly sweep and budget check are due, or when the toolchain is over 90 days old (suggest re-running fk-scout; install nothing without a yes). One note per session at most.
+The SessionStart note says when the weekly sweep and budget check are due, or when the toolchain is over 90 days old (suggest re-running fk-scout; install nothing without a yes). One note per session at most. A separate note asks for `fk metrics` once 3 tasks have closed: tell the founder in plain words what it shows (tokens and cost, rework, catches vs false alarms).

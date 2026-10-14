@@ -32,6 +32,7 @@
       "verifier", "writer"],
     "builtin": ["general-purpose", "Explore", "Plan", "statusline-setup", "claude-code-guide"]
   },
+  "reviewer_agents": ["code-reviewer", "security-reviewer", "critic", "verifier", "test-engineer", "architect"],
   "commands": {
     "builtin": ["add-dir", "agents", "bug", "clear", "compact", "config", "context", "cost", "doctor", "exit", "export", "feedback",
       "help", "hooks", "ide", "init", "login", "logout", "mcp", "memory", "model", "permissions", "plan", "plugin", "pr-comments",

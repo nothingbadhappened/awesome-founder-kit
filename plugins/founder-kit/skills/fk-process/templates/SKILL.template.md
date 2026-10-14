@@ -11,18 +11,18 @@ OMC runs the workflow; this adds {{Project}} rules. Truth (overrides memory): `d
 Runner `{{runner}}`. Modules: {{modules}}. Feature branches only.
 
 ## Flow
-1. `oh-my-claudecode:omc-plan`; addendum `templates/task-spec.md` → `docs/tasks/<date>-<slug>.md`.
+1. `oh-my-claudecode:omc-plan`, then `fk task new "<title>" --risk <Rn>` (or `--from-omc <plan or prd.json>`): `docs/tasks/<id>.md` with checkable `AC-n` lines.
 2. `oh-my-claudecode:tdd` at planned seams; `oh-my-claudecode:execute` per slice.
 3. `oh-my-claudecode:verify` with `{{runner}} check`; changed user flow → one `e2e` run of the whole flow.{{#if ml}} AI/ML: `eval` within baseline.{{/if}}
 4. `oh-my-claudecode:omc-review`, agents per risk, lens `fk-conformance`. Critical/high/medium block.
-5. Commit each slice green on all gates; `fk-journal`. Push outside ralph/autopilot (OMC's git guardrails block `git push` there).
+5. Commit each slice green on all gates; `fk-journal`. Close: `fk task done <id>`. Push outside ralph/autopilot (OMC's git guardrails block `git push` there).
 
-## Risk (highest wins; unsure → up)
+## Risk (highest wins; unsure → up; `fk risk` proposes from the diff, raise never lower)
 | Class | Scope | Review |
 |---|---|---|
-| R0 | docs, copy, test-only; never production code | gates only; one line in `docs/tasks/r0-log.md` |
-| R1 | one module | code-reviewer |
-| R2 | cross-module, schema, money, new dependency/vendor, UI flow | code-reviewer + security-reviewer |
+| R0 | docs, copy, test-only; never production code | gates only |
+| R1 | one module | gates + one independent reviewer, `Verdict: ACCEPT` |
+| R2 | cross-module, schema, money, new dependency/vendor, UI flow | code-reviewer + security-reviewer; every AC PASS with evidence |
 | R3 | {{r3_areas}} | R2 + critic on the plan, second round |
 
 ## Bootstrap mode (while any `{{runner}}` target in `docs/standards/portability.md` is missing)

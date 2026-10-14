@@ -4,7 +4,7 @@ Build a real product with AI agents when you are **not** a programmer. You decid
 
 [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) (OMC) runs the development workflow: planning, building, verifying and reviewing. The kit never replaces it. It adds what OMC does not do: the founder layer (idea, review, decisions, brand, journal), tool research and setup for any kind of project, light checks that the work follows what was agreed, and guards for secrets, spending and cleanup.
 
-> Status: **v0.4**. The rules come from real projects, including the mistakes. Expect changes.
+> Status: **v0.5**. The rules come from real projects, including the mistakes. Expect changes.
 
 ## Install
 
@@ -51,6 +51,9 @@ While building:
 - **Conformance:** reviewers load `fk-conformance` and check each change against your decisions and standards; boundary rules become automatic checks.
 - **Learning:** `fk-learn` records each failure once, counts repeats and turns repeated lessons into checks.
 - **Stewardship:** `fk-steward` logs everything agents start, cleans up only this project's leftovers (`fk sweep`), and plans budget caps per provider (`fk budget plan`); providers with real hard caps are preferred.
+- **Risk class from the change:** `fk risk` proposes R0–R3 from the actual diff (auth, money, migrations, infrastructure, CI and gate files, new dependencies, API contracts, your impact map). Agents may raise a class, never lower it.
+- **Acceptance criteria as a check:** `fk task new` writes `docs/tasks/<id>.md` with checkable criteria (or imports them from an OMC plan or PRD). Reviewers mark each one PASS or FAIL with evidence; `fk task done` closes the task only when reviewers who wrote no code for it accepted it, as many as the risk class needs (from R2, every criterion PASS). Nothing blocks work in progress. In OMC's ralph PRD mode OMC already verifies each story's criteria; the kit adds reviewer independence (who wrote what) and the same check for work outside ralph.
+- **Is it paying off:** `fk metrics` shows per task the estimated tokens and cost, time to done, rework, regressions, and what the guards and reviews caught versus your overrides (likely false alarms).
 - **Memory:** codebase-memory-mcp maps the code; MemPalace keeps history; decisions and lessons live in your repo files.
 
 ## Practice packs

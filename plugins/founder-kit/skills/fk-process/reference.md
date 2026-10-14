@@ -30,7 +30,7 @@ Standards go into drydock's slots; the skill only points at them.
 | `portability.template.md` | `docs/standards/portability.md` |
 | `impact-map.template.yaml` | `docs/standards/impact-map.yaml` |
 | `lessons.md` | `docs/process/lessons.md` |
-| `task-spec.md`, `adr.md` | `.claude/skills/<project>-dev/templates/` as is |
+| `task-spec.md`, `adr.md` | `.claude/skills/<project>-dev/templates/` as is (`fk task new` fills the `{{…}}` of task-spec.md; skip it in the placeholder search) |
 
 ## Why (for reviewers)
 - Thin skill: OMC already plans, executes, verifies and reviews; a second procedure competes with it and gets ignored. The skill holds only facts, risk mapping and gate rules.

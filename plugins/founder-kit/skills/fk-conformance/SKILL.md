@@ -20,6 +20,19 @@ A lens on OMC's review, not an extra review round. Report findings inside the no
 4. **Boundary rule not yet a gate?** An ADR or standard states a boundary, layering, banned dependency or data rule that `<runner> check` does not enforce. Fix: propose the gate (tool, rule, the planted violation that must turn it red) as a separate reviewed task; never weaken an existing gate.
 5. **Red line crossed?** Anything against `00-constraints.md`. Severity critical; stop and ask the founder.
 
+## Verdict file (tasks with `docs/tasks/<id>.md`)
+Save `docs/tasks/<id>.review-<n>.md` (next free n) yourself with one shell command; reviewer agents have no Write tool. Never hand the text to the main session: a review it writes does not count.
+```bash
+cat > docs/tasks/<id>.review-<n>.md <<'EOF'
+Round: 1
+AC-1: PASS — <evidence: test name, output line, file:line>
+AC-2: FAIL — <what is missing>
+Verdict: ACCEPT | REVISE
+EOF
+```
+PowerShell: `Set-Content -Encoding utf8 -Path docs/tasks/<id>.review-<n>.md -Value @'` … `'@` (closing `'@` at the start of a line).
+R1 needs only the `Verdict:` line; from R2 every AC needs a line, and a PASS needs evidence. Only a reviewer agent that wrote no code for the task before its review counts (`fk task check <id>`). After fixes: next n; a second round: `Round: 2`.
+
 ## Don't
 - Re-review style, tests or correctness; OMC's reviewer already does that.
 - Author architecture; propose ADRs, never decide them.

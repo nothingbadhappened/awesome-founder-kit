@@ -6,6 +6,8 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 export const GUARDS = ['secret-guard', 'gate-guard', 'install-guard', 'cloud-guard', 'git-guard'];
+// Names a founder may override with `fk-override <name> <reason>`: the guards plus task-check (read by `fk task done`).
+export const OVERRIDABLE = [...GUARDS, 'task-check'];
 export const FAIL_CLOSED = new Set(['secret-guard', 'gate-guard', 'install-guard']);
 // .fk/.gitignore: kit-written files that never belong in a commit (hook state lives outside the repo, see stateDir).
 export const RUNTIME = ['ledger.jsonl', 'steward.json', 'adopt/', 'quarantine/'];
@@ -339,8 +341,20 @@ export function hooksPathStatus(root) {
 }
 
 // ---- small shell helpers for Bash/PowerShell guards ----
+// The literal body of a quoted heredoc (cat > notes.md <<'EOF') or single-quoted here-string (Set-Content x.md -Value @'...'@)
+// written to a doc file is text, not commands: a review that cites ".fk/config.json" or "git commit --no-verify" is not run.
+// Unquoted forms expand $(...) and stay in.
+// Only the plain one-command shape: cat > <doc> <<'EOF' (or cat <<'EOF' > <doc>); Set-Content|Add-Content ... <doc> ... -Value @'.
+const TO_DOC = /^\s*>>?\s*["']?[^\s"'<>|;&]+\.(?:md|mdx|markdown|txt)["']?\s*$/i;
+export function docBodies(cmd) {
+  return String(cmd)
+    .replace(/^([ \t]*cat[ \t]*)([^\n<]*)<<-?[ \t]*(['"])(\w+)\3([^\n]*)\n[\s\S]*?\n[ \t]*\4[ \t]*(?=\n|$)/g, // no m flag: only a heredoc that opens the whole command (a fake opener inside a string must not hide later lines)
+      (m, cat, before, q, tag, after) => (TO_DOC.test(before.trim() ? before : after) && !(before.trim() && after.trim()) ? `${cat}${before}${after}` : m))
+    .replace(/^([ \t]*(?:Set-Content|Add-Content)\b[^\n;|&]*?\.(?:md|mdx|markdown|txt)\b[^\n;|&]*?)@'\r?\n[\s\S]*?\r?\n'@([ \t]*)$/gi,
+      (m, head, tail) => `${head}''${tail}`);
+}
 export function segments(cmd) {
-  return String(cmd).split(/&&|\|\||[;|\n]/).map((s) => s.trim()).filter(Boolean);
+  return docBodies(cmd).split(/&&|\|\||[;|\n]/).map((s) => s.trim()).filter(Boolean);
 }
 export function tokens(seg) {
   const out = [];

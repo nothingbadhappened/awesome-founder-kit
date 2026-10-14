@@ -21,4 +21,5 @@ OMC's verifier checks these with evidence (output, link, path) in the task file.
 - [ ] `<runner> setup && <runner> up` works from a clean clone.
 - [ ] `<runner> sweep` list empty; nothing left running.
 - [ ] Docs, ADRs, module READMEs updated.
+- [ ] `fk task done <id>` passed (or the founder typed an override).
 - [ ] Slice committed; journal entry appended; lessons appended or `seen:` incremented.

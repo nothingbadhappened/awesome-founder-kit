@@ -14,7 +14,7 @@ Read first: `docs/00-constraints.md`, `docs/02-architecture.md`, `docs/adr/*`, `
 3. **Scale to project shape** (from `00-constraints.md`): reference.md §Scaling. Log every dropped safety rule in the generated skill's changelog with its reason.
 4. **Instantiate templates:** map in reference.md §Templates. Delete non-applicable sections, but never a safety section without a changelog reason.
 5. **Fill placeholders** in every written file: reference.md §Placeholders. Finish by searching `{{`, `{{/if` and `<runner>`: zero hits, or generation is not done.
-6. **Risk classes:** map R3 to the project's real dangers (personal data, money, kids, medical claims, irreversible actions…). Unsure → round up. Keep the review-agent column of the template table.
+6. **Risk classes:** map R3 to the project's real dangers (personal data, money, kids, medical claims, irreversible actions…). Unsure → round up. Keep the review-agent column of the template table. Add each R3 path to `fk risk` with `fk config set risk_r3 "<glob>"`.
 7. **Fitness gates:** turn each boundary, layering, banned-dependency and data rule in the ADRs and architecture doc into a check run by `<runner> check` (tool chosen per stack). A rule with no gate yet → `GATE-MISSING: <rule>` in the bootstrap task.
 8. **Impact map:** add a rule for each coupling code analysis can't see (legal texts, store listings, pricing pages, design tokens, ML baselines, API clients of shipped apps).
 9. **Wire in:** append to `CLAUDE.md` (never remove content; stay within 40 lines): "Any change follows `<project>-dev`; agreements live in `docs/adr/` and `docs/standards/`; reviewers load `fk-conformance`; lessons in `docs/process/lessons.md`."

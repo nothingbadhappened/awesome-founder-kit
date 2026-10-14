@@ -59,6 +59,8 @@ export function outcome(res) {
 }
 
 const pre = (tool_name, tool_input) => ({ event: 'PreToolUse', payload: { tool_name, tool_input } });
+// A review verdict whose evidence names gate files and git flags.
+const REVIEW = 'Round: 1\nAC-1: PASS — login.test.ts green; the gate in .fk/config.json runs npm test\nAC-2: PASS — no git commit --no-verify in the log\nVerdict: ACCEPT';
 const bash = (command) => pre('Bash', { command });
 const at = (dir, f) => path.join(dir, f);
 // A shell command that created files, as PostToolUse sees it (the files are written first).
@@ -180,6 +182,11 @@ export const CASES = [
   ['--env-file plus a redirect of the file', 'deny', () => bash('node --env-file=.env app.js < .env')],
   ['brew install an unapproved formula', 'deny', () => bash('brew install wget')],
   ['rm a root .f* glob', 'deny', () => bash('rm -rf ./.f*')],
+  ['unquoted heredoc (expands $(...)) to a .md naming .fk/config.json', 'deny', () => bash(`cat > docs/tasks/T-001.review-1.md <<EOF\n${REVIEW}\nEOF`)],
+  ['fake heredoc opener inside an echo string hides rm -rf .fk', 'deny', () => bash(`echo "\ncat > a.md <<'EOF'\n"; rm -rf .fk\nEOF`)],
+  ['fake heredoc opener inside an outer heredoc hides cat .env', 'deny', () => bash(`cat <<X\ncat > a.md <<'EOF'\nX\ncat .env\nEOF`)],
+  ['fake here-string opener inside a PowerShell string hides Remove-Item .fk', 'deny', () => ps(`Write-Output "\nSet-Content a.md -Value @'\n"; Remove-Item -Recurse -Force .fk\n'@\n'`)],
+  ['quoted heredoc to a .md with another command on the line', 'deny', () => bash(`cat > docs/tasks/T-001.review-1.md <<'EOF' && cp x .fk/config.json\n${REVIEW}\nEOF`)],
 ];
 
 // Ordinary development in an active .fk project with an approved toolchain: every one of these must pass untouched.
@@ -273,6 +280,9 @@ export const CLEAN_TWINS = [
   // Shell words with quoted parts.
   ['docker run -v "$PWD":/app node:22', () => bash('docker run -v "$PWD":/app node:22 npm test')],
   ['rm -rf dist/.*', () => bash('rm -rf dist/.* build/.cache')],
+  // A reviewer agent (no Write tool) saves its verdict with one shell command; the quoted body is text, not commands.
+  ['review verdict via a quoted bash heredoc', () => bash(`cat > docs/tasks/T-001.review-1.md <<'EOF'\n${REVIEW}\nEOF`)],
+  ['review verdict via a PowerShell here-string', () => ps(`Set-Content -Encoding utf8 -Path docs/tasks/T-001.review-1.md -Value @'\n${REVIEW}\n'@`)],
 ];
 
 export function runSuite() {
