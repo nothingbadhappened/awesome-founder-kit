@@ -305,10 +305,12 @@ function Install-FounderKit {
     $cfgFile = Join-Path $mdir 'config.json'
     $cfg = Read-Json $cfgFile
     $palace = if ($cfg -and $cfg.palace_path) { $cfg.palace_path } else { Join-Path $mdir 'palace' }
+    # `mempalace init --backend` records the backend; the palace folder itself appears on the first mine or save.
+    $hasPalace = [bool]($cfg -and $cfg.backend) -or (Test-Path $palace)
     $notes = @()
-    if (Test-Path $palace) { $r.found += 'mempalace:palace' }
+    if ($hasPalace) { $r.found += 'mempalace:palace' }
     if ($cfg -and $cfg.hooks -and $null -ne $cfg.hooks.silent_save) { $r.found += 'mempalace:silent-save' }
-    if (-not (Test-Path $palace)) {
+    if (-not $hasPalace) {
       $r.steps += @{ action = 'configure'; cmd = "New-Item -ItemType Directory -Force -Path '$PalaceHome' | Out-Null; if (`$?) { mempalace init --yes --no-llm --backend sqlite_exact '$PalaceHome' }"; rollback = 'delete the palace folder MemPalace reports in `mempalace status` and the "backend" line in its config.json' }
       if ($r.level -ne 'red') { $r.level = 'red'; $r.reason = 'not-configured'; $r.note = 'no palace yet' }
     } else {

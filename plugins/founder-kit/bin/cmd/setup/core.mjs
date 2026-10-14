@@ -204,11 +204,12 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
       }
       const dir = mempalaceConfigDir(env);
       const cfg = readJson(path.join(dir, 'config.json'), null);
-      const palace = cfg?.palace_path || path.join(dir, 'palace');
+      // `mempalace init --backend` records the backend; the palace folder itself appears on the first mine or save.
+      const hasPalace = !!cfg?.backend || fs.existsSync(cfg?.palace_path || path.join(dir, 'palace'));
       const notes = [];
-      if (fs.existsSync(palace)) found('mempalace:palace');
+      if (hasPalace) found('mempalace:palace');
       if (cfg?.hooks?.silent_save !== undefined) found('mempalace:silent-save');
-      if (!fs.existsSync(palace)) {
+      if (!hasPalace) {
         add('configure', [palaceInitStep(lock, o, path.join(fkHome(), 'palace-home'))]);
         if (row.level !== 'red') Object.assign(row, { level: 'red', reason: 'not-configured', note: 'no palace yet' });
       } else if ((cfg?.backend || 'chroma') !== spec.backend) notes.push(`your existing palace uses the ${cfg?.backend || 'chroma'} backend; kept as is (switching needs a migration)`);

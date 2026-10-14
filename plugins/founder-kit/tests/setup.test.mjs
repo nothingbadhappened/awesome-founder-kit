@@ -12,6 +12,7 @@ const KIT = path.join(import.meta.dirname, '..');
 const REPO = path.join(KIT, '..', '..');
 const LOCK = JSON.parse(fs.readFileSync(path.join(KIT, 'compat.lock.json'), 'utf8'));
 const WIN = process.platform === 'win32';
+const NATIVE_CONTAINERS = !WIN && process.platform !== 'darwin'; // Linux: Podman runs natively, no machine
 const { runSetup } = await import('../bin/cmd/setup.mjs');
 const { default: baseToolsNote } = await import('../hooks/session/10-base-tools.mjs');
 
@@ -146,7 +147,9 @@ test('everything present and configured: all ready, exit 0, status cached', asyn
     const pre = readAll(sb).filter((e) => e.tool !== 'fk-shim');
     assert.ok(pre.length > 0 && pre.every((e) => e.kind === 'pre-existing' && e.undo === null), 'everything found is recorded as pre-existing');
     for (const item of ['git', 'gitleaks', 'mempalace', 'mempalace:plugin', 'mempalace:marketplace', 'mempalace:palace', 'mempalace:silent-save',
-      'oh-my-claudecode:plugin', 'git-lfs:config', 'codebase-memory-mcp:auto_index', 'podman', 'podman:machine']) assert.ok(pre.some((e) => e.item === item), item);
+      'oh-my-claudecode:plugin', 'git-lfs:config', 'codebase-memory-mcp:auto_index', 'podman',
+      ...(NATIVE_CONTAINERS ? [] : ['podman:machine'])]) assert.ok(pre.some((e) => e.item === item), item);
+    if (NATIVE_CONTAINERS) assert.ok(!pre.some((e) => e.item === 'podman:machine'), 'no machine recorded on Linux');
     await setup(sb, []);
     assert.equal(readAll(sb).filter((e) => e.tool !== 'fk-shim').length, pre.length, 'recorded once');
   } finally { sb.cleanup(); }
@@ -304,6 +307,22 @@ test('settings: CBM auto_index on is planned off; an existing palace and the use
     assert.match(r.out, /uses the chroma backend; kept as is/);
     assert.match(r.out, /silent_save is off \(your choice; kept\)/);
     assert.doesNotMatch(r.out, /mempalace init/);
+  } finally { sb.cleanup(); }
+});
+
+// `mempalace init` writes config.json (palace_path, backend) but no palace folder until the first mine: that is a palace.
+test('a palace set up by mempalace init (config written, folder not yet created) is ready, and init is not planned again', async () => {
+  const sb = sandbox({ ...READY, palace: false });
+  try {
+    const mp = path.join(sb.home, '.config', 'mempalace');
+    fs.writeFileSync(path.join(mp, 'config.json'), JSON.stringify({ palace_path: path.join(mp, 'palace'), backend: 'sqlite_exact', hooks: { silent_save: true } }));
+    const r = await setup(sb, []);
+    assert.equal(r.code, 0, r.out);
+    assert.doesNotMatch(r.out, /mempalace init|no palace yet/);
+    assert.ok(readAll(sb).some((e) => e.item === 'mempalace:palace' && e.kind === 'pre-existing'));
+    // Without the backend line (only the silent_save step wrote config.json) there is no palace yet.
+    fs.writeFileSync(path.join(mp, 'config.json'), JSON.stringify({ hooks: { silent_save: true } }));
+    assert.match((await setup(sb, ['--dry-run'])).out, /mempalace init --yes/);
   } finally { sb.cleanup(); }
 });
 
@@ -504,6 +523,12 @@ test('install scripts carry every locked tool at its pinned version, and nothing
     }
     assert.ok(src.includes(`'${LOCK.checked}'`) || src.includes(`=${LOCK.checked}`), `${name} lock date`);
     assert.doesNotMatch(src, /@latest|releases\/latest|codebase-memory-mcp\/main\//, `${name}: no unpinned installs`);
+    if (name === 'install.sh') {
+      // macOS ships bash 3.2, which ends a $( ) at a case pattern's ')' (a syntax error at run time, not at bash -n).
+      assert.doesNotMatch(src, /\$\(\s*case\b/, 'install.sh: no case inside $( )');
+      // codebase-memory's installer refuses a group-writable ~/.local/bin (umask 002, Ubuntu's default for users).
+      assert.match(src, /chmod go-w ~\/\.local\/bin && curl -fsSL \$CBM_RAW\/install\.sh/, 'install.sh: ~/.local/bin not group-writable before CBM');
+    }
     assert.match(src, /bin.fk\.mjs['"]?\)? setup --shim/, `${name}: writes the user-level fk shim through the kit`);
     assert.doesNotMatch(src, /npm-only/, `${name}: an npm OMC is never doubled with the plugin copy`);
     assert.doesNotMatch(src, /[A-Z]:\\Users\\|\/home\/[a-z]|\/Users\/[a-z]/i, `${name}: no personal paths`);
@@ -528,6 +553,20 @@ test('install.sh --dry-run: plans from fake tools, writes nothing', { skip: !git
     assert.match(r.stdout, /Install gitleaks/);
     assert.ok(r.stdout.includes(`V=${LOCK.tools.gitleaks.version}`), 'pinned gitleaks release');
     assert.equal(fs.existsSync(sb.fk), false, 'dry run writes nothing');
+  } finally { sb.cleanup(); }
+});
+
+test('install.sh --dry-run: a palace set up by mempalace init (no folder yet) is not initialised again', { skip: !gitBash && 'bash not found' }, () => {
+  const sb = sandbox({ plugins: READY.plugins, marketplaces: READY.marketplaces, mpConfig: { backend: 'sqlite_exact', hooks: { silent_save: true } } });
+  try {
+    for (const [name, text] of Object.entries(PRESENT)) {
+      const cfg = name === 'codebase-memory-mcp' ? '[ "$1" = config ] && { echo false; exit 0; }\n' : '';
+      fs.writeFileSync(path.join(sb.bin, name), `#!/bin/sh\n${cfg}echo "${text}"\n`, { mode: 0o755 });
+    }
+    const utils = WIN ? 'C:\\Program Files\\Git\\usr\\bin' : '/usr/bin:/bin';
+    const r = spawnSync(gitBash, [path.join(REPO, 'install', 'install.sh'), '--dry-run'], { env: { ...sb.env, PATH: `${sb.bin}${path.delimiter}${utils}` }, encoding: 'utf8', timeout: 60000 });
+    assert.ok(r.status === 0 || r.status === 1, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /mempalace init|no palace yet/);
   } finally { sb.cleanup(); }
 });
 

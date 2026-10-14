@@ -68,6 +68,7 @@ export function installSteps(id, lock, os, { has = () => false, upgrade = false 
       if (win) return [{ cmd: WINGET(t.windows.winget, `--version ${t.windows.version}`), rollback: `winget uninstall --id ${t.windows.winget}` }];
       return [{ cmd: `uv tool install podman-compose==${t.version}`, rollback: 'uv tool uninstall podman-compose' }];
     case 'codebase-memory-mcp': {
+      // Its installer refuses a group-writable ~/.local/bin, which a umask of 002 (Ubuntu's default for users) creates.
       const base = `https://github.com/${t.repo}/releases/download/v${t.version}`;
       const raw = `https://raw.githubusercontent.com/${t.repo}/v${t.version}`;
       return win
@@ -76,7 +77,7 @@ export function installSteps(id, lock, os, { has = () => false, upgrade = false 
             + `$env:CBM_DOWNLOAD_URL = '${base}'; & powershell -NoProfile -ExecutionPolicy Bypass -File $f; $c = $LASTEXITCODE; Remove-Item $f; exit $c`,
           rollback: 'codebase-memory-mcp uninstall -y',
         }]
-        : [{ cmd: `curl -fsSL ${raw}/install.sh | CBM_DOWNLOAD_URL=${base} bash`, rollback: 'codebase-memory-mcp uninstall -y' }];
+        : [{ cmd: `mkdir -p ~/.local/bin && chmod go-w ~/.local/bin && curl -fsSL ${raw}/install.sh | CBM_DOWNLOAD_URL=${base} bash`, rollback: 'codebase-memory-mcp uninstall -y' }];
     }
     case 'mempalace':
       return [{ cmd: `uv tool install mempalace==${t.version}`, rollback: 'uv tool uninstall mempalace' }];

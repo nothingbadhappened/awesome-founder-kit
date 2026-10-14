@@ -110,5 +110,7 @@ jobs:
           if ($code -gt 1) { Write-Output "fk setup --dry-run exited $code"; exit 1 }
           if ($out -notmatch 'Dry run: nothing was changed|All base tools are ready|need attention') { Write-Output 'no plan or summary in the output'; exit 1 }
           if ($out -match '\n\s+at .+:\d+:\d+|TypeError|ReferenceError|SyntaxError') { Write-Output 'fk setup crashed'; exit 1 }
+          # Actions ends a pwsh step with `exit $LASTEXITCODE`, which would still be fk's expected 1.
+          exit 0
       - name: Guards (planted PreToolUse events, checked-out kit)
         run: node evals/smoke/guards.mjs plugins/founder-kit

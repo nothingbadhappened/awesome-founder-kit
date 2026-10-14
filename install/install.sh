@@ -324,7 +324,7 @@ state() {
   fi
 
   row codebase-memory-mcp codebase-memory "about 40 MB" "gives Claude a map of your code so it reads less and costs less" "$(ver codebase-memory-mcp --version)"
-  grade codebase-memory-mcp "curl -fsSL $CBM_RAW/install.sh | CBM_DOWNLOAD_URL=$CBM_BASE bash" "codebase-memory-mcp uninstall -y"
+  grade codebase-memory-mcp "mkdir -p ~/.local/bin && chmod go-w ~/.local/bin && curl -fsSL $CBM_RAW/install.sh | CBM_DOWNLOAD_URL=$CBM_BASE bash" "codebase-memory-mcp uninstall -y"
   i=$(last)
   for key in auto_index auto_watch; do
     local have=""
@@ -343,12 +343,14 @@ state() {
     plugin_steps mempalace "$MP_MARKETPLACE" "$MP_PLUGIN" mempalace
     [ "${LEVELS[$i]}" != red ] && set_red plugin-missing "the Claude Code plugin is not installed"
   fi
-  local mdir cfg palace notes=""
+  local mdir cfg palace has_palace notes=""
   mdir=$(mempalace_dir); cfg="$mdir/config.json"; palace="$mdir/palace"
   if [ -f "$cfg" ] && grep -q '"palace_path"' "$cfg"; then palace=$(grep -Eo '"palace_path": *"[^"]*"' "$cfg" | sed 's/.*: *"//; s/"$//'); fi
-  [ -e "$palace" ] && found mempalace:palace
+  # `mempalace init --backend` records the backend; the palace folder itself appears on the first mine or save.
+  if [ -e "$palace" ] || grep -q '"backend"' "$cfg" 2>/dev/null; then has_palace=1; else has_palace=; fi
+  [ -n "$has_palace" ] && found mempalace:palace
   grep -q '"silent_save"' "$cfg" 2>/dev/null && found mempalace:silent-save
-  if [ ! -e "$palace" ]; then
+  if [ -z "$has_palace" ]; then
     step mempalace configure "mkdir -p '$PALACE_HOME' && mempalace init --yes --no-llm --backend sqlite_exact '$PALACE_HOME'" \
       "delete the palace folder MemPalace reports in \`mempalace status\` and the backend line in its config.json"
     [ "${LEVELS[$i]}" != red ] && set_red not-configured "no palace yet"
@@ -392,14 +394,15 @@ write_ledger() { # tool action cmd rollback ok
 # What was already here before this run: one pre-existing line per item the ledger does not know yet.
 write_found() {
   mkdir -p "$FK_HOME"
-  local i it items
+  local i it items v
   for i in "${!IDS[@]}"; do
     items="${FOUNDS[$i]}"
     case "${IDS[$i]}" in oh-my-claudecode|founder-kit) ;; podman) [ -n "${VERSIONS[$i]}" ] && items="$items ${PODMAN_ENGINE:-podman}" ;; *) [ -n "${VERSIONS[$i]}" ] && items="$items ${IDS[$i]}" ;; esac
     for it in $items; do
       grep -q "\"item\":\"$it\"" "$LEDGER" 2>/dev/null && continue
+      v=; case "$it" in *:*) ;; *) v=$(json_esc "${VERSIONS[$i]}") ;; esac # not inside $( ): bash 3.2 (macOS) misparses it
       printf '{"ts":"%s","via":"install.sh","tool":"%s","item":"%s","kind":"pre-existing","action":"found","version":"%s","undo":null,"ok":true}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${it%%:*}" "$it" "$(case "$it" in *:*) ;; *) json_esc "${VERSIONS[$i]}" ;; esac)" >> "$LEDGER"
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${it%%:*}" "$it" "$v" >> "$LEDGER"
     done
   done
 }

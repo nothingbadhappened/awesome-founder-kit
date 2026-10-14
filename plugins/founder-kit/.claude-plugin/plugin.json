@@ -1,6 +1,6 @@
 {
   "name": "founder-kit",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "A founder layer on top of oh-my-claudecode for building a product with AI agents when you have little or no technical background: import the idea, review it honestly, record decisions, write the project's standards and gates, a brand system, and a journal that turns experience into lessons.",
   "author": {
     "name": "Founder Kit maintainers"

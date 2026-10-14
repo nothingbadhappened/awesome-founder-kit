@@ -2,6 +2,10 @@
 
 What changed in each Founder Kit release, in plain words. `fk update` shows the entries between your version and the new one.
 
+## v0.8.1 (2026-10-14)
+
+Installer fixes found by the first real-install tests. A palace that `mempalace init` has just set up now counts as ready, so the installer no longer stays red and reruns init (the palace folder only appears on the first save). On Linux, codebase-memory now installs where a user's default settings make `~/.local/bin` group-writable, which its installer refuses. On macOS, the installer no longer prints shell errors while recording what was already on the computer.
+
 ## v0.8.0 (2026-10-14)
 
 Taking the kit off your computer now also cleans up your projects first, if you want: `fk uninstall --system` lists each project still set up for the kit, with the tools `fk provision` added there, and asks per project (or for all at once) whether to roll those tools back and take the kit out of the project. Both happen before the kit itself is removed, because they need it; without questions, add `--rollbacks` and `--projects` to `--yes`. The README was rewritten to be shorter and to match what the kit really does. Coming from 0.7: `fk init` now also adds Claude Code sandbox and permission rules that keep agents out of the kit's folder, and agents can no longer switch off or uninstall the kit; `fk update` brings new versions (from an agent, only after you type `fk-approve update <version> <reason>`); `fk uninstall --system` takes the kit off the computer using the install list the kit now keeps; and `fk-approve gates` and `fk-approve baseline` are the lines you type to approve changing a gate command or re-recording the baseline.

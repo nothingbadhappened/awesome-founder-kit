@@ -2,7 +2,7 @@
 
 Founder Kit lets someone who is **not** a programmer build a real product with AI agents in Claude Code. [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) (OMC) runs the development workflow: planning, building, verifying, reviewing. The kit never replaces it. It adds the founder layer on top (idea, honest review, decisions, brand, journal) and light governance (records, checks and guards) so the work keeps to what you agreed, in any kind of project.
 
-> Status: **v0.8**. The rules come from real projects, mistakes included. Expect changes.
+> Status: **v0.8.1**. The rules come from real projects, mistakes included. Expect changes.
 
 ## Who it is for, and what you get
 
