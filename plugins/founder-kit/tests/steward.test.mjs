@@ -10,7 +10,11 @@ import { takeSnapshot, writeJson, readSnapshot } from '../hooks/lib.mjs';
 import { fingerprint } from '../bin/cmd/steward/lib.mjs';
 import { alive } from '../bin/cmd/steward/proc.mjs';
 
-process.env.FK_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'fk-home-')); // kit state stays out of the real home
+if (!process.env.FK_HOME) { // kit state stays out of the real home, and the temp home goes when the file is done
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-home-'));
+  process.env.FK_HOME = home;
+  test.after(() => fs.rmSync(home, { recursive: true, force: true }));
+}
 
 const KIT = path.join(import.meta.dirname, '..');
 const FK = path.join(KIT, 'bin', 'fk.mjs');

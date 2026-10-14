@@ -192,6 +192,10 @@ async function audit() {
   const forged = untyped(root, rows);
   if (forged.length) say(`fk audit: NOT typed by you, review: ${forged.join('; ')}. Remove what you did not approve (git checkout -- .fk/<file>).`);
   await auditTasks(root);
+  const { drift } = await import('./cmd/index.mjs');
+  const d = await drift(root);
+  if (d.lines.length) { say('fk audit: decisions, lessons and the bible have drifted:'); for (const l of d.lines) say(`- ${l}`); }
+  else if (d.checked) say('fk audit: decisions, lessons and the bible are in step with the work.');
   if (!rows.length) return say('fk audit: nothing logged yet.');
   const count = (pred) => rows.filter(pred).length;
   say(`fk audit: ${rows.length} entries since ${rows[0]?.ts ?? '-'}.`);
@@ -256,12 +260,12 @@ function kickoff(action, quiet = false) {
 }
 
 // ---- config keys agents may set: the sanctioned door; the rest of .fk/ is founder or hook territory ----
-const AGENT_KEYS = ['runner', 'check', 'stack', 'fast_gates', 'protected_extra', 'risk_r3', 'reviewer_extra'];
+const AGENT_KEYS = ['runner', 'check', 'stack', 'fast_gates', 'protected_extra', 'risk_r3', 'reviewer_extra', 'parent'];
 async function config(sub, key, ...rest) {
   const root = needRoot();
   const value = rest.join(' ').trim();
   if (sub !== 'set' || !AGENT_KEYS.includes(key) || !value) {
-    say(`usage: fk config set <${AGENT_KEYS.join('|')}> <value>   (protected_extra and risk_r3 add one glob, reviewer_extra one reviewer agent; they never remove)`);
+    say(`usage: fk config set <${AGENT_KEYS.join('|')}> <value>   (protected_extra and risk_r3 add one glob, reviewer_extra one reviewer agent; they never remove. parent: a folder or URL)`);
     process.exitCode = 1; return;
   }
   if (key === 'reviewer_extra') {
@@ -270,6 +274,15 @@ async function config(sub, key, ...rest) {
       say(`fk: ${value} is not a reviewer agent name (agents that build, such as executor, cannot review).`);
       process.exitCode = 1; return;
     }
+  }
+  if (key === 'parent') { // the umbrella project: a local folder (its docs/PROJECT.md joins the read-first note) or a URL
+    const local = !/^(?:https?:\/\/|ssh:\/\/|git@)\S+$/i.test(value);
+    const abs = path.resolve(root, value);
+    if (local && (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory() || abs === path.resolve(root))) {
+      say(`fk: parent "${value}" is not an https/ssh/git URL or an existing folder outside this project.`);
+      process.exitCode = 1; return;
+    }
+    if (local) say(fs.existsSync(path.join(abs, 'docs', 'PROJECT.md')) ? 'fk: the parent bible (docs/PROJECT.md) joins the session read-first note.' : 'fk: the parent has no docs/PROJECT.md yet; the read-first note will name it once it exists.');
   }
   const file = path.join(root, '.fk', 'config.json');
   if (!fs.existsSync(file)) { say('fk: run `fk init` first.'); process.exitCode = 1; return; }

@@ -2,6 +2,19 @@
 
 Read only the section a step names.
 
+## Capability prompts
+
+Starting points for step 1, never tool answers; the project's own constraints decide.
+
+- Game engine: drive the editor and scenes, headless builds per platform, play/edit-mode tests, large-asset versioning and merge of scene files, build size.
+- Embedded/hardware: build and flash, serial log, host-side unit tests, hardware-in-the-loop (often a founder step), power and memory budget.
+- Mobile: build and sign per store, simulator/device tests, crash reporting, store listing.
+- Desktop: packaging and signing per OS, auto-update, installer tests.
+- Data/ML: data versioning, reproducible runs, evaluation, compute cost.
+- Audio/video: loudness or colour targets, transcoding, transcripts or captions, publishing.
+- Documents/research: sources and citations, reference manager, export formats, fact checks.
+- Web: hosting, database, auth, payments, end-to-end tests, paid-service caps.
+
 ## Research brief
 
 Prompt for each OMC `document-specialist` agent. Launch it with tools limited to `WebSearch, WebFetch, Read` (no Bash, no write tools).

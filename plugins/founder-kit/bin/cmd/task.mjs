@@ -1,7 +1,9 @@
-// fk task new "<title>" [--risk Rn] [--from-omc <path>] | check <id> | done <id> | reopen <id> | list
+// fk task new "<title>" [--risk Rn] [--from-omc <path>] [--paths <globs>] | context <id> | check <id> | done <id> | reopen <id> | list
 // Task records, not a workflow: docs/tasks/<id>.md holds the acceptance criteria (AC-n); reviewers write
 // docs/tasks/<id>.review-<n>.md with "Verdict: ACCEPT|REVISE" and (required from R2) one "AC-n: PASS|FAIL — evidence" line per criterion.
 // Start/close times live in the kit state dir. Nothing here blocks an edit or a stop; `fk task done` is the close step.
+// "Context:" in the record lists the ADRs and lessons covering the task's paths; from R2 the accepted review needs
+// one "ADR-NNNN: OK|VIOLATION — note" line per cited ADR.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,14 +11,17 @@ import { loadConfig, readJson, readLog, readOverrides } from '../../hooks/lib.mj
 import { readTasks, writeTasks, readAuthorship, readGateRuns, logGateRun } from '../../hooks/authorship.mjs';
 import { say, git, needRoot, parseArgs, today, measure } from './adopt/util.mjs';
 import { assess, maxClass, CLASSES } from './risk.mjs';
+import { loadIndex, relevant, contextIds, CONTEXT_LINE } from '../../hooks/knowledge.mjs';
+import { setNow } from './bible.mjs';
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TEMPLATE = path.join(KIT, 'skills', 'fk-process', 'templates', 'task-spec.md');
 export const DIR = 'docs/tasks';
 const ID = /^T-\d{3,}$/;
-const USAGE = 'usage: fk task new "<title>" [--risk R0|R1|R2|R3] [--from-omc <path>] | fk task check <id> | fk task done <id> | fk task reopen <id> | fk task list';
+const USAGE = 'usage: fk task new "<title>" [--risk R0|R1|R2|R3] [--from-omc <path>] [--paths "<glob>,<file>"] | fk task context <id> | fk task check <id> | fk task done <id> | fk task reopen <id> | fk task list';
 const REVIEW = /^(T-\d{3,})\.review-(\d+)\.md$/;
 const AC_LINE = /^\s*(?:[-*]\s*)?(AC-\d+)\s*:\s*(PASS|FAIL)\b\s*(?:[—–:-]+\s*)?(.*)$/i;
+const ADR_LINE = /^\s*(?:[-*]\s*)?(ADR-\d{4})\s*:\s*(OK|VIOLATION)\b\s*(?:[—–:-]+\s*)?(.*)$/i;
 const OVERRIDE_HINT = 'The founder may close it anyway by typing: fk-override task-check <reason> (then run fk task done again).';
 
 const contract = () => readJson(path.join(KIT, 'policy', 'base-contract.json'), {});
@@ -38,6 +43,7 @@ export function parseTask(text) {
     const kv = /^(\w+):\s*(.*)$/.exec(line);
     if (kv && kv[1] !== 'acceptance') t[kv[1]] = kv[2].replace(/^["']|["']$/g, '').trim();
   }
+  t.context = contextIds(text);
   return t;
 }
 export function readTask(root, id) {
@@ -103,32 +109,67 @@ function template(root) {
 }
 const head = (root) => { const r = git(root, ['rev-parse', '--verify', '-q', 'HEAD']); return r.status === 0 ? r.stdout.trim() : null; };
 
-function newTask(root, title, flags) {
+// ---- Context: the ADRs and lessons covering the task's paths (declared, from the OMC plan, or touched so far) ----
+const splitPaths = (v) => [].concat(v ?? []).flatMap((x) => String(x).split(/[,\s]+/)).map((x) => x.trim().replace(/^\.\//, '')).filter(Boolean);
+// Repo paths an OMC plan or PRD names (quoted or in backticks, with a folder), e.g. `src/billing/charge.ts`.
+const omcPaths = (root, file) => {
+  try { return [...new Set([...fs.readFileSync(path.resolve(root, file), 'utf8').matchAll(/[`'"]((?:[\w.-]+\/)+[\w.*-]+)[`'"]/g)].map((m) => m[1]).filter((p) => !/^(?:https?:|\.omc\/)/.test(p)))].slice(0, 30); }
+  catch { return []; }
+};
+async function contextFor(root, paths) {
+  const hits = paths.length ? relevant((await loadIndex(root, ['knowledge'])).knowledge, paths) : [];
+  const items = [...hits.filter((h) => h.kind === 'adr').slice(0, 5), ...hits.filter((h) => h.kind === 'lesson').slice(0, 5)];
+  return items.length ? items.map((i) => `${i.id} (${i.title})`).join(', ') : paths.length ? 'none for these paths' : 'none yet (declare --paths, or run fk task context after the first edits)';
+}
+const withContext = (text, line) => (CONTEXT_LINE.test(text) ? text.replace(CONTEXT_LINE, () => `Context: ${line}`) : text.replace(/^(# .*)$/m, (h) => `${h}\nContext: ${line}`));
+
+async function newTask(root, title, flags) {
   if (!title) return fail(USAGE);
   const risk = String(flags.risk || 'R1').toUpperCase();
   if (!CLASSES.includes(risk)) return fail(`fk task: risk must be one of ${CLASSES.join(', ')}.`);
   let acs = ['<one checkable statement>'];
   let omc = '';
+  const paths = splitPaths(flags.paths);
   if (flags['from-omc']) {
     try { acs = importOmc(root, flags['from-omc']); omc = String(flags['from-omc']).split(path.sep).join('/'); }
     catch (e) { return fail(`fk task: could not import acceptance criteria from ${flags['from-omc']}: ${e.message}. Nothing created.`); }
+    if (!paths.length) paths.push(...omcPaths(root, flags['from-omc']));
   }
   const state = readTasks(root);
   const id = nextId(root, state);
-  const fill = { id, title: title.replace(/[\r\n]+/g, ' '), risk, date: today(flags), omc,
+  const context = await contextFor(root, paths);
+  const fill = { id, title: title.replace(/[\r\n]+/g, ' '), risk, date: today(flags), omc, paths: paths.join(', '), context,
     acceptance: acs.map((a, i) => `  - AC-${i + 1}: ${String(a).replace(/[\r\n]+/g, ' ')}`).join('\n') };
-  const text = template(root).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in fill ? fill[k] : m)).replace(/^omc: *\r?\n/m, '');
+  let text = template(root).replace(/\{\{(\w+)\}\}/g, (m, k) => (k in fill ? fill[k] : m)).replace(/^omc: *\r?\n/m, '').replace(/^paths: *\r?\n/m, '');
+  if (paths.length && !/^paths:/m.test(text)) text = text.replace(/^acceptance:/m, () => `paths: ${fill.paths}\nacceptance:`); // a project template without the slot
+  text = withContext(text, context);
   fs.mkdirSync(path.join(root, DIR), { recursive: true });
   fs.writeFileSync(path.join(root, rel(id)), text);
   state.tasks = { ...(state.tasks || {}), [id]: { start: new Date().toISOString(), base: head(root), reopened: 0 } };
   writeTasks(root, state);
+  setNow(root, { 'Open task': `${id} ${fill.title}` });
   say(`fk task: created ${rel(id)} (declared ${risk}${flags.risk ? '' : ', the default; raise it if unsure'}, ${acs.length} acceptance criteria${omc ? ` from ${omc}` : ''}).`);
+  say(`Context: ${context}`);
   if (!omc) {
     say('Write each AC-n as one checkable statement in the front matter.');
     const c = omcCandidates(root);
     if (c.length) say(`OMC already has acceptance criteria in: ${c.slice(0, 3).join(', ')}. To import them instead: delete ${rel(id)} and run fk task new "<title>" --from-omc <path>.`);
   }
   say(`Close it with: fk task done ${id}`);
+}
+
+// fk task context <id>: recompute Context from the declared paths plus the files touched so far.
+async function refresh(root, id) {
+  const file = path.join(root, rel(id));
+  const t = readTasks(root).tasks?.[id];
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return fail(`fk task: ${rel(id)} not found.`); }
+  const touched = t?.start ? readAuthorship(root).filter((e) => Date.parse(e.ts) >= Date.parse(t.start) && !e.path.startsWith(`${DIR}/`)).map((e) => e.path) : [];
+  const changed = t && !t.done ? assess(root, { base: t.base }).files.filter((f) => !f.startsWith(`${DIR}/`)) : t?.files || [];
+  const paths = [...new Set([...splitPaths(parseTask(text)?.paths), ...touched, ...changed])];
+  const context = await contextFor(root, paths);
+  fs.writeFileSync(file, withContext(text, context));
+  say(`fk task: ${id} Context: ${context}`);
 }
 
 // ---- reviews and authorship ----
@@ -143,8 +184,13 @@ export function reviews(root, id, task) {
   return names.map((n) => REVIEW.exec(n)).filter((m) => m && m[1] === id).map((m) => {
     const file = `${DIR}/${m[0]}`;
     const text = fs.readFileSync(path.join(root, file), 'utf8');
-    const acs = {};
-    for (const l of text.split(/\r?\n/)) { const a = AC_LINE.exec(l); if (a) acs[a[1].toUpperCase()] = { pass: a[2].toUpperCase() === 'PASS', evidence: a[3].trim() }; }
+    const acs = {}, adrs = {};
+    for (const l of text.split(/\r?\n/)) {
+      const a = AC_LINE.exec(l);
+      if (a) acs[a[1].toUpperCase()] = { pass: a[2].toUpperCase() === 'PASS', evidence: a[3].trim() };
+      const d = ADR_LINE.exec(l);
+      if (d) adrs[d[1].toUpperCase()] = { ok: d[2].toUpperCase() === 'OK', note: d[3].trim() };
+    }
     const verdict = (/^\s*Verdict:\s*(ACCEPT|REVISE)\b/im.exec(text)?.[1] || '').toUpperCase() || null;
     const round = Number(/^\s*Round:\s*(\d+)/im.exec(text)?.[1] || 1);
     const writers = log.filter((e) => e.path === file);
@@ -157,7 +203,7 @@ export function reviews(root, id, task) {
       if (bad) invalid = `written by ${agentName(bad.agent_type) || 'the main session'}, not a reviewer agent`;
       else if (impl) invalid = `written by ${agentName(impl.agent_type)} ${impl.agent_id}, which also wrote code for this task before the review`;
     }
-    return { file, n: Number(m[2]), round, acs, verdict, reviewer: agentName(last?.agent_type), invalid };
+    return { file, n: Number(m[2]), round, acs, adrs, verdict, reviewer: agentName(last?.agent_type), invalid };
   }).sort((a, b) => a.round - b.round || a.n - b.n);
 }
 
@@ -208,6 +254,15 @@ export function evaluate(root, id, { runGates = false } = {}) {
     else if (!said.acs[ac.id].pass) missing.push(`${ac.id}: FAIL in ${said.file} (${said.acs[ac.id].evidence || 'no evidence given'})`);
     else if (perAc && !said.acs[ac.id].evidence) missing.push(`${ac.id}: PASS in ${said.file} without evidence`);
   }
+  // R2 and up: the latest accepted review answers each ADR the task's Context cites; a VIOLATION fails.
+  const accepted = valid.filter((r) => r.verdict === 'ACCEPT').at(-1);
+  if (perAc && accepted) {
+    for (const a of rec.context.filter((x) => x.startsWith('ADR-'))) {
+      const line = accepted.adrs[a];
+      if (!line) missing.push(`${a}: no "${a}: OK|VIOLATION — <note>" line in ${accepted.file} (the task's Context cites it)`);
+      else if (!line.ok) missing.push(`${a}: VIOLATION in ${accepted.file} (${line.note || 'no note'})`);
+    }
+  }
   const need = effective === 'R1' ? [] : ['code-reviewer', 'security-reviewer', ...(effective === 'R3' ? ['critic'] : [])];
   if (!valid.length) missing.push('no review by an independent reviewer agent');
   else if (valid.at(-1).verdict !== 'ACCEPT') missing.push(`latest review ${valid.at(-1).file} says ${valid.at(-1).verdict || 'no Verdict line'}, not ACCEPT`);
@@ -243,8 +298,11 @@ function done(root, id) {
   report(id, r);
   const close = (extra) => {
     const files = assess(root, { base: task.base }).files;
-    state.tasks[id] = { ...task, done: new Date().toISOString(), end: head(root), files, last_check: { pass: r.pass, declared: r.declared, proposed: r.proposed, effective: r.effective, invalid: r.invalid, missing: r.missing }, ...extra };
+    const rec = readTask(root, id);
+    state.tasks[id] = { ...task, done: new Date().toISOString(), end: head(root), files, cites: rec?.context || [], last_check: { pass: r.pass, declared: r.declared, proposed: r.proposed, effective: r.effective, invalid: r.invalid, missing: r.missing }, ...extra };
     writeTasks(root, state);
+    const next = Object.entries(state.tasks).filter(([, t]) => t.start && !t.done).sort((a, b) => Date.parse(b[1].start) - Date.parse(a[1].start))[0];
+    setNow(root, { 'Open task': next ? `${next[0]} ${readTask(root, next[0])?.title || ''}`.trim() : 'none', 'Last finished': `${id} ${rec?.title || ''} (${today()})` });
   };
   if (r.pass) { close({}); return say(`fk task: ${id} closed.`); }
   const o = task && override(root, id, state);
@@ -276,7 +334,8 @@ export default async function task(args) {
   const [sub, arg] = pos;
   if (sub === 'new') return newTask(root, pos.slice(1).join(' ').trim(), flags);
   if (sub === 'list') return list(root);
-  if (!['check', 'done', 'reopen'].includes(sub) || !ID.test(arg || '')) return fail(USAGE);
+  if (!['check', 'done', 'reopen', 'context'].includes(sub) || !ID.test(arg || '')) return fail(USAGE);
+  if (sub === 'context') return refresh(root, arg);
   if (sub === 'check') { const r = evaluate(root, arg, { runGates: true }); report(arg, r); if (!r.pass) process.exitCode = 1; return; }
   return sub === 'done' ? done(root, arg) : reopen(root, arg);
 }

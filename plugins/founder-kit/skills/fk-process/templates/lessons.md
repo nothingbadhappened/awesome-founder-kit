@@ -10,7 +10,7 @@ Entry format:
 - Lesson:
 - Evidence:
 ```
-Severity high = security/privacy/money/data loss, or work blocked.
+Severity high = security/privacy/money/data loss, or work blocked. `[paths: …]` are the globs the lesson applies to: `fk task new` lists it for tasks there and the first edit there shows it once per session (`**` alone shows nowhere).
 
 Starter lessons below come from an earlier kit project (seen: 1 here).
 

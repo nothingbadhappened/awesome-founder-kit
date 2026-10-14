@@ -9,8 +9,13 @@ import { writeJson, takeSnapshot, stateDir } from './lib.mjs';
 export const DISPATCH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dispatch.mjs');
 // Claude Code exports this to plugin hooks; the dispatcher records founder directives only when it lives under it.
 export const PLUGIN_ROOT = path.dirname(path.dirname(DISPATCH));
-// The kit keeps per-project state in <FK_HOME>/state; the suite never touches the real one.
-process.env.FK_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'fk-home-'));
+// The kit keeps per-project state in <FK_HOME>/state; the suite never touches the real one. Without FK_HOME, one temp
+// home serves this whole run (the hook processes it spawns inherit it) and is removed when the run ends.
+if (!process.env.FK_HOME) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-home-'));
+  process.env.FK_HOME = home;
+  process.once('exit', () => { try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ } });
+}
 
 const ESLINT = '{\n  "rules": {\n    "no-console": "warn",\n    "no-unused-vars": "error",\n    "eqeqeq": "error"\n  }\n}\n';
 const TSCONFIG = '{\n  "compilerOptions": {\n    "target": "ES2020",\n    "strict": true\n  }\n}\n';

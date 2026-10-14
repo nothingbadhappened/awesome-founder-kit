@@ -2,6 +2,7 @@
 // PostToolUse only, and only while a task is open (state: <kit state dir>/tasks.json, written by `fk task`).
 // File tools log their path; a shell command logs the files git status lists whose mtime moved since the last tool
 // finished (one git process). Lines: {ts, session_id, agent_id, agent_type, path} in <kit state dir>/authorship.jsonl.
+// Returns the paths it logged (the first-edit area note reuses them, so no second git process).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -19,7 +20,7 @@ const FILE_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
 
 export function record(root, input, tool, ti, now = Date.now()) {
   const open = Object.values(readTasks(root).tasks || {}).filter((t) => t.start && !t.done);
-  if (!open.length) return;
+  if (!open.length) return [];
   const markFile = stateFile(root, 'authorship-mark.json');
   const since = Math.max(readJson(markFile, {}).ts || 0, Math.min(...open.map((t) => Date.parse(t.start))));
   let paths = [];
@@ -34,8 +35,9 @@ export function record(root, input, tool, ti, now = Date.now()) {
   }
   writeJson(markFile, { ts: now });
   const base = { ts: new Date(now).toISOString(), session_id: input.session_id || null, agent_id: input.agent_id || null, agent_type: input.agent_type || null };
-  const lines = paths.filter((p) => p && !p.startsWith('.omc/') && !p.startsWith('.fk/')).map((p) => JSON.stringify({ ...base, path: p }) + '\n');
-  if (lines.length) fs.appendFileSync(stateFile(root, 'authorship.jsonl'), lines.join(''));
+  const kept = paths.filter((p) => p && !p.startsWith('.omc/') && !p.startsWith('.fk/'));
+  if (kept.length) fs.appendFileSync(stateFile(root, 'authorship.jsonl'), kept.map((p) => JSON.stringify({ ...base, path: p }) + '\n').join(''));
+  return kept;
 }
 
 // Gate runs (`fk baseline check`, `fk task check`): {ts, ok, gates, paths} in <kit state dir>/gates.jsonl; paths = files

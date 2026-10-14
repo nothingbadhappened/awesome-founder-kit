@@ -4,13 +4,15 @@ title: {{title}}
 risk: {{risk}}
 created: {{date}}
 omc: {{omc}}
+paths: {{paths}}
 acceptance:
 {{acceptance}}
 ---
 # {{title}}
+Context: {{context}}
 UI: yes|no · Review status: reviewed | early-unreviewed
 
-Created by `fk task new`; closed by `fk task done {{id}}`. Each `AC-n` is one checkable statement. Reviewers write `docs/tasks/{{id}}.review-<n>.md` (format: fk-conformance). Only what OMC's plan does not hold goes below. An `early-unreviewed` task may not be called done.
+Created by `fk task new` (Context: the ADRs and lessons for these paths; refresh with `fk task context {{id}}`); closed by `fk task done {{id}}`. Each `AC-n` is one checkable statement. Reviewers write `docs/tasks/{{id}}.review-<n>.md` (format: fk-conformance). Only what OMC's plan does not hold goes below. An `early-unreviewed` task may not be called done.
 
 ## Impact acknowledgements (impact-map.yaml + code-graph or Grep)
 | Rule / symbol | Updated / Not affected because… |

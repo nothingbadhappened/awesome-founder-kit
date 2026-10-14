@@ -7,7 +7,7 @@ Founder layer on top of oh-my-claudecode. Skills:
 - `fk-kickoff`: honest review of the idea, then the agreed constraints.
 - `fk-process`: writes the project's own dev workflow skill, risk classes and gates.
 - `fk-brand`: brand and UI/UX system for products with an interface.
-- `fk-scout`: researches and proposes the project's toolchain.
+- `fk-scout`: researches and proposes the project's toolchain for any domain (a game, firmware, a podcast, a web app).
 - `fk-provision`: installs only what the founder approved.
 - `fk-conformance`: review lens that checks changes against ADRs and standards.
 - `fk-journal`: process journal that turns experience into lessons.

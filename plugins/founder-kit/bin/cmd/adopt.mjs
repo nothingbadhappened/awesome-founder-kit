@@ -14,6 +14,8 @@ import { say, needRoot, parseArgs, git, slug } from './adopt/util.mjs';
 import { survey, surveyMd, sessionsDir } from './adopt/survey.mjs';
 import { record } from './baseline.mjs';
 import { fingerprint, readLedger, appendLedger } from './steward/lib.mjs';
+import { claudeMdLines } from './lessons.mjs';
+import { recordMode } from './bible.mjs';
 
 const USAGE = 'usage: fk adopt survey [--run name=cmd]... [--skip gitleaks,docker,sessions] | fk adopt draft <name> [--from file] | fk adopt plan | fk adopt apply | fk adopt where';
 export const adoptDir = (root) => path.join(stateDir(root), 'adopt');
@@ -90,7 +92,7 @@ ${rs.length ? rs.map(([lvl, area, text]) => `- [ ] ${lvl} ${area}: ${text}`).joi
 
 function targets(root) {
   const c = loadConfig(root).paths;
-  return [['00-constraints.md', c.constraints], ['lessons.md', 'docs/process/lessons.md'], ['impact-map.yaml', 'docs/standards/impact-map.yaml'], ['adr', c.adr]];
+  return [['00-constraints.md', c.constraints], ['PROJECT.md', 'docs/PROJECT.md'], ['lessons.md', 'docs/process/lessons.md'], ['impact-map.yaml', 'docs/standards/impact-map.yaml'], ['adr', c.adr]];
 }
 
 function apply(root, flags) {
@@ -116,6 +118,18 @@ function apply(root, flags) {
       fs.copyFileSync(a, path.join(root, rel));
       say(`created ${rel}`);
     }
+  }
+  // The bible's one CLAUDE.md line, within the 40-line budget; an uncommitted CLAUDE.md is work in progress (A6).
+  if (fs.existsSync(path.join(root, 'docs', 'PROJECT.md'))) {
+    const md = path.join(root, 'CLAUDE.md');
+    const text = fs.existsSync(md) ? fs.readFileSync(md, 'utf8') : '';
+    const index = s.stack?.north_star?.length || /^Source of truth:/im.test(fs.readFileSync(path.join(root, 'docs', 'PROJECT.md'), 'utf8'));
+    recordMode(root, index ? 'index' : 'own');
+    say(`bible   docs/PROJECT.md mode: ${index ? `index (source of truth: ${(s.stack?.north_star || []).map((d) => d.file).join(', ') || 'the linked docs'})` : 'own'}`);
+    if (text.includes('docs/PROJECT.md')) say('kept    CLAUDE.md (already points at docs/PROJECT.md)');
+    else if (dirty.has('CLAUDE.md')) say('fk adopt: CLAUDE.md has uncommitted changes; add this line yourself later: Project bible: docs/PROJECT.md — read it first.');
+    else if (claudeMdLines(root) >= 40) say('fk adopt: CLAUDE.md is at its 40-line budget; merge a line, then add: Project bible: docs/PROJECT.md — read it first.');
+    else { fs.writeFileSync(md, `${text}${text && !text.endsWith('\n') ? '\n' : ''}Project bible: docs/PROJECT.md — read it first.\n`); say('added   CLAUDE.md line: Project bible: docs/PROJECT.md — read it first.'); }
   }
   // Already-running resources: pre-existing, never swept.
   const known = new Set(readLedger(root).map((e) => `${e.kind}:${e.id}`));

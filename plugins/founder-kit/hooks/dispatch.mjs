@@ -46,18 +46,28 @@ function preToolUse(ctx) {
 }
 const deny = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
 
+// First edit in an area an accepted ADR or an open lesson covers: one short, non-blocking line (once per item per session).
+async function areaContext(root, input, files) {
+  try {
+    const note = files.length && await (await import('./knowledge.mjs')).areaNote(root, input.session_id, files);
+    return note ? context('PostToolUse', note) : null;
+  } catch (e) { log(root, { event: 'PostToolUse', guard: 'knowledge', decision: 'allow', error: String(e?.message || e) }); return null; }
+}
+
 async function postToolUse({ root, input, tool, ti }) {
-  try { (await import('./authorship.mjs')).record(root, input, tool, ti); } catch (e) { log(root, { event: 'PostToolUse', guard: 'authorship', decision: 'allow', error: String(e?.message || e) }); }
+  let touched = [];
+  try { touched = (await import('./authorship.mjs')).record(root, input, tool, ti); } catch (e) { log(root, { event: 'PostToolUse', guard: 'authorship', decision: 'allow', error: String(e?.message || e) }); }
   if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(tool)) {
     const rel = relPath(root, ti.file_path || ti.notebook_path || '');
     if (protectedClass(root, rel)) refreshSnapshot(root, [rel]); // sanctioned by PreToolUse
-    return null;
+    return areaContext(root, input, rel ? [rel] : []);
   }
   if (!shellTool(tool) && !tool.startsWith('mcp__')) return null;
   const r = gate.tamper(root, !!activeOverride(root, 'gate-guard', input.session_id));
-  if (!r) return null;
-  log(root, { event: 'PostToolUse', guard: 'gate-guard', decision: r.decision === 'block' ? 'tamper' : r.decision, tool, agent_type: input.agent_type, changed: r.changed });
-  return r.decision === 'block' ? { decision: 'block', reason: r.reason } : null;
+  if (r) log(root, { event: 'PostToolUse', guard: 'gate-guard', decision: r.decision === 'block' ? 'tamper' : r.decision, tool, agent_type: input.agent_type, changed: r.changed });
+  if (r?.decision === 'block') return { decision: 'block', reason: r.reason };
+  // A shell command: only the files authorship already listed (while a task is open), so no extra git process.
+  return shellTool(tool) ? areaContext(root, input, touched || []) : null;
 }
 
 // Founder-typed lines (UserPromptSubmit is the human). Never blocks; a line it cannot read just gets a note.
@@ -189,24 +199,31 @@ async function main() {
       case 'PostToolUse': return out(await postToolUse(ctx));
       case 'UserPromptSubmit': return out(userPromptSubmit(ctx));
       case 'SubagentStart': {
-        const text = pointer(loadConfig(root), input.agent_type);
+        let more = '';
+        try { more = (await import('./knowledge.mjs')).orientation(root); } catch (e) { log(root, { event, guard: 'knowledge', decision: 'allow', error: String(e?.message || e) }); }
+        const text = [pointer(loadConfig(root), input.agent_type), more].filter(Boolean).join(' ');
         log(root, { event, guard: 'pointer', decision: 'inject', agent_type: input.agent_type });
         return out(context(event, text));
       }
-      case 'SessionStart':
+      case 'SessionStart': {
+        if (!['startup', 'clear', 'compact', 'resume'].includes(input.source)) return;
+        let first = null, know = null; // fk read-first: bible, parent bible, open task, recent ADRs
+        try { know = await import('./knowledge.mjs'); first = await know.readFirst(root, input.session_id); }
+        catch (e) { log(root, { event, guard: 'knowledge', decision: 'allow', error: String(e?.message || e) }); }
         if (input.source === 'startup' || input.source === 'clear') {
           const kept = sessionSnapshot(root);
           if (kept.length) log(root, { event, guard: 'gate-guard', decision: 'tamper-persisted', changed: kept });
           const tamper = kept.length && `fk: ${kept.join(', ')} changed outside the kit since the last session; not trusted until restored (git checkout -- <file>) or re-approved.`;
           // hooks/session/*.mjs: default export (ctx) => short note | undefined; each must be fast and never throw past here.
-          const notes = [tamper, omcNotice(), ...(await sessionNotes(ctx)), CLI_NOTE].filter(Boolean);
+          const extra = await sessionNotes(ctx);
+          // One bible reminder per session start: the weekly note (35-bible) replaces the read-first stale suffix.
+          if (first && know && extra.some((n) => typeof n === 'string' && n.startsWith(`fk: update ${know.BIBLE}`))) first = first.replace(know.STALE_SUFFIX, '');
+          const notes = [tamper, omcNotice(), ...extra, first, CLI_NOTE].filter(Boolean);
           return out(context(event, notes.join('\n')));
         }
-        if (input.source === 'compact' || input.source === 'resume') {
-          log(root, { event, guard: 'pointer', decision: 'inject', agent_type: input.agent_type, source: input.source });
-          return out(context(event, `${pointer(loadConfig(root), input.agent_type)}\n${CLI_NOTE}`));
-        }
-        return;
+        log(root, { event, guard: 'pointer', decision: 'inject', agent_type: input.agent_type, source: input.source });
+        return out(context(event, [pointer(loadConfig(root), input.agent_type), first, CLI_NOTE].filter(Boolean).join('\n')));
+      }
       default: return; // Stop, SubagentStop and anything else: never act
     }
   } catch (e) {

@@ -8,17 +8,15 @@ description: "Use when OMC reviewers check a change or plan: compare it with acc
 A lens on OMC's review, not an extra review round. Report findings inside the normal review output, each with file:line, the ADR or standard it cites, severity, and a paste-ready fix.
 
 ## Read
-- `docs/adr/*.md` with status accepted, accepted (founder) or auto-decided (latest wins; skip superseded).
-- `docs/standards/*` (architecture, data, process, security, portability, impact-map).
-- `docs/00-constraints.md` for red lines.
-- The `check` command in the project runner, to see which gates exist.
+Accepted ADRs in `docs/adr/` (which statuses count: reference.md §Read), `docs/standards/*`, red lines in `docs/00-constraints.md`, and the runner's `check` command (the gates that exist).
 
 ## Checklist
-1. **Contradicts an accepted ADR?** The change does what an ADR rejected, or undoes what it decided. Severity high. Fix: change the code, or write a superseding ADR (founder approval if the original was a founder decision).
-2. **Breaks `docs/standards`?** A rule is violated that no gate caught. Severity per the rule's area (security, data, money = high). Fix: comply, and treat the missed catch as a gate candidate (item 4).
-3. **New decision without an ADR?** A new dependency, vendor, data store, boundary, protocol, or a reversal of a pattern, with no ADR. Severity medium (high if R3). Fix: name the ADR to write (title, decision, alternatives).
-4. **Boundary rule not yet a gate?** An ADR or standard states a boundary, layering, banned dependency or data rule that `<runner> check` does not enforce. Fix: propose the gate (tool, rule, the planted violation that must turn it red) as a separate reviewed task; never weaken an existing gate.
-5. **Red line crossed?** Anything against `00-constraints.md`. Severity critical; stop and ask the founder.
+1. **Contradicts an accepted ADR?** It does what an ADR rejected, or undoes what it decided. Severity high. Fix: change the code, or a superseding ADR (founder approval if the original was a founder decision).
+2. **Breaks `docs/standards`?** A rule no gate caught. Severity per area (security, data, money = high). Fix: comply; the missed catch is a gate candidate (item 4).
+3. **New decision without an ADR?** A new dependency, vendor, data store, boundary, protocol, or a reversed pattern. Severity medium (high if R3). Fix: name the ADR to write (title, decision, alternatives).
+4. **Boundary rule not yet a gate?** An ADR or standard states a boundary, layering, banned dependency or data rule `<runner> check` does not enforce. Fix: propose the gate (tool, rule, the planted violation that turns it red) as a separate reviewed task; never weaken a gate.
+5. **Bible behind?** An accepted ADR's `bible:` sections of `docs/PROJECT.md` (index mode: the linked source doc) not updated in the same task (`fk bible check` lists them). Severity medium. Fix: update them, then `fk bible touch <section>`.
+6. **Red line crossed?** Anything against `00-constraints.md`. Severity critical; stop and ask the founder.
 
 ## Verdict file (tasks with `docs/tasks/<id>.md`)
 Save `docs/tasks/<id>.review-<n>.md` (next free n) yourself with one shell command; reviewer agents have no Write tool. Never hand the text to the main session: a review it writes does not count.
@@ -30,8 +28,8 @@ AC-2: FAIL — <what is missing>
 Verdict: ACCEPT | REVISE
 EOF
 ```
-PowerShell: `Set-Content -Encoding utf8 -Path docs/tasks/<id>.review-<n>.md -Value @'` … `'@` (closing `'@` at the start of a line).
-R1 needs only the `Verdict:` line; from R2 every AC needs a line, and a PASS needs evidence. Only a reviewer agent that wrote no code for the task before its review counts (`fk task check <id>`). After fixes: next n; a second round: `Round: 2`.
+PowerShell: reference.md §PowerShell.
+R1 needs only the `Verdict:` line; from R2 every AC needs a line, a PASS needs evidence, and each ADR in the task's `Context:` line needs `ADR-NNNN: OK|VIOLATION — <note>` (a VIOLATION fails `fk task check`). Only a reviewer agent that wrote no code for the task before its review counts (`fk task check <id>`). After fixes: next n; a second round: `Round: 2`.
 
 ## Don't
 - Re-review style, tests or correctness; OMC's reviewer already does that.

@@ -121,7 +121,7 @@ export async function detect(lock, { env = process.env, os: o = osName(), withGh
         const have = p ? probe(tool.bin, ['config', 'get', key], env)?.out : null;
         if (p && have === want) continue;
         add('configure', [{ cmd: `codebase-memory-mcp config set ${key} ${want}`, rollback: `codebase-memory-mcp config set ${key} ${have || 'true'}` }]);
-        if (p && row.level !== 'red') Object.assign(row, { level: 'red', reason: 'not-configured', note: `${key} is ${have}; the kit keeps it ${want} so indexing runs only when asked` });
+        if (p && row.level !== 'red') Object.assign(row, { level: 'red', reason: 'not-configured', note: `${key} is ${have || 'not set'}; the kit keeps it ${want} so indexing runs only when asked` });
       }
     }
 

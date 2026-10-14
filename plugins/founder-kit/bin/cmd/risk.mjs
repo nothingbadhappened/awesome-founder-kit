@@ -3,7 +3,7 @@
 // Agents may raise the class they declared, never lower it: effective = max(declared, proposed).
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadConfig, globToRegex, protectedClass } from '../../hooks/lib.mjs';
+import { loadConfig, globToRegex, protectedClass, MANIFEST, quietPath } from '../../hooks/lib.mjs';
 import { say, git, needRoot, parseArgs } from './adopt/util.mjs';
 
 export const CLASSES = ['R0', 'R1', 'R2', 'R3'];
@@ -25,18 +25,11 @@ const SCHEMA = /(?:^|\/)(?:schema\.(?:prisma|sql|rb)|structure\.sql)$|(?:^|\/)(?
 const SIGNAL = /\b(?:bcrypt|argon2|jwt|oauth|set_password|check_password|stripe|charge|refund)\b|\bauthenticate\(|\b(?:DROP TABLE|ALTER TABLE|DELETE FROM|TRUNCATE)\b/i;
 const PROD_COMPOSE = /(?:^|\/)(?:docker-)?compose[.-](?:prod|production)[\w.-]*\.ya?ml$/i;
 const CONTRACT = /(?:^|\/)(?:openapi|swagger)[\w.-]*\.(?:ya?ml|json)$|\.(?:proto|graphql|gql|avsc)$|(?:^|\/)(?:contracts?|api-spec)\//i;
-const DOC = /(?:^|\/)docs?\/|\.(?:md|mdx|markdown|txt|rst|adoc)$|(?:^|\/)(?:LICENSE|CHANGELOG|AUTHORS)[^/]*$/i;
-const TEST = /(?:^|\/)(?:tests?|__tests__|spec|specs|fixtures|e2e)\/|[._-](?:test|spec)\.[\w]+$|\.spec\.|_test\.go$|(?:^|\/)(?:test_[^/]+|tests?|conftest)\.py$/i;
-const JAVA_TEST = /[a-z0-9]Tests?\.(?:java|kt)$/; // FooTest.java (case matters: not latest.java)
 const LOCK = /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile\.lock|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock)$/;
-const MANIFEST = /(?:^|\/)(?:package\.json|requirements[\w.-]*\.txt|pyproject\.toml|Pipfile|Cargo\.toml|go\.mod|Gemfile|composer\.json|build\.gradle(?:\.kts)?|pom\.xml)$/;
 // An added line that names a dependency with a version: "name": "^1.2", name = "1.2", name==1.2, module v1.2.3, <artifactId>.
 const DEP_LINE = /^\s*"(@?[\w./-]+)"\s*:\s*"[~^<>=]*\d[^"]*"|^\s*([\w.-]+)\s*=\s*(?:\{[^}]*version\s*=\s*)?"[~^<>=]*\d|^\s*([A-Za-z][\w.-]*)\s*(?:\[[^\]]*\])?\s*(?:[=<>~!]=|>|<)|^\s*(?:require\s+)?([\w.-]+\.[\w.-]+\/[\w./-]+)\s+v\d|^\s*["']([A-Za-z][\w.-]*)(?:\[[^\]]*\])?\s*(?:[=<>~!]=|>|<)[^"']*["']|<artifactId>([\w.-]+)<\/artifactId>|^\s*gem\s+["']([\w.-]+)["']/;
 
 const words = (rel) => rel.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[\s/._-]+/).filter(Boolean);
-const CMAKE = /(?:^|\/)CMakeLists\.txt$/i;
-// Docs and tests change no behaviour; a manifest that ends in .txt (requirements.txt, CMakeLists.txt) does.
-const quietPath = (p) => (DOC.test(p) && !MANIFEST.test(p) && !CMAKE.test(p)) || TEST.test(p) || JAVA_TEST.test(p);
 
 export function defaultBase(root) {
   for (const b of ['main', 'master', 'origin/main', 'origin/master']) {

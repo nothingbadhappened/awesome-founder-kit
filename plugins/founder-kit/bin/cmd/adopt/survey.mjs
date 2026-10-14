@@ -7,6 +7,8 @@ import { git, tool, slug, measure, gitleaks, pairs, many } from './util.mjs';
 
 const SKIP = new Set(['node_modules', '.git', '.omc', '.fk', 'dist', 'build', 'out', 'coverage', 'target', 'vendor', '.venv', 'venv', '__pycache__', '.next', '.turbo', '.cache', '.godot']);
 const MANIFESTS = /^(package\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|requirements[\w-]*\.txt|pyproject\.toml|Pipfile|setup\.py|go\.mod|Cargo\.toml|pom\.xml|build\.gradle(\.kts)?|Gemfile|composer\.json|.+\.csproj|.+\.sln|project\.godot|pubspec\.yaml|Package\.swift|mix\.exs|deno\.jsonc?)$/i;
+// Unity: the package manifest only inside Packages/, the editor version only inside ProjectSettings/.
+const UNITY = /(?:^|\/)(?:Packages\/manifest\.json|ProjectSettings\/ProjectVersion\.txt)$/;
 const INFRA = /^(Dockerfile|docker-compose[\w.-]*\.ya?ml|compose\.ya?ml|.+\.tf|Pulumi\.ya?ml|serverless\.ya?ml|vercel\.json|netlify\.toml|fly\.toml|wrangler\.toml|firebase\.json|app\.yaml|render\.yaml|Procfile|.+\.bicep|cdk\.json|template\.ya?ml)$/i;
 const CI = ['.github/workflows', '.gitlab-ci.yml', '.circleci', 'azure-pipelines.yml', 'bitbucket-pipelines.yml', 'Jenkinsfile'];
 const ENV_FILES = /^\.env\.(example|sample|template|dist|defaults)$|^example\.env$/i;
@@ -29,10 +31,36 @@ function walk(root, depth = 3) {
   return files;
 }
 
+// Existing north-star docs (a vision doc, game design doc, PRD, design folder, or Vision/Principles sections in
+// README/AGENTS/CLAUDE): when found, docs/PROJECT.md becomes a thin index that links to them (bible_mode index).
+const NORTH_NAME = /(?:^|[-_ .])(?:gdd|game[-_ ]?design(?:[-_ ]?doc(?:ument)?)?|design[-_ ]?doc(?:ument)?|vision|prd|product[-_ ]?requirements?|north[-_ ]?star|overview|charter|manifesto|principles|project[-_ ]?brief)(?:[-_ .]|$)/i;
+// A design folder counts by its top-level page (README, index) or a top-level design file, not by generic subpages.
+const NORTH_DIR = /(?:^|\/)docs?\/design\/(?:readme|index)\.\w+$|^(?:docs?\/)?design\.\w+$/i;
+const NORTH_HEAD = /^#{1,3}\s+((?:product\s+)?vision|mission|principles|design pillars|pillars|goals|non-negotiables|overview)\b/gim;
+const AGENT_HEAD = /^#{1,3}\s+((?:product\s+)?vision|mission)\b/gim; // AGENTS.md/CLAUDE.md are agent instructions unless they state the vision
+const DOC_EXT = /\.(?:md|mdx|markdown|txt|rst|adoc|docx|pdf)$/i;
+const KIT_DOCS = /^docs\/(?:PROJECT\.md|adr\/|process\/|tasks\/|standards\/|archive\/)/i;
+export function northStar(root, files) {
+  const out = [];
+  for (const f of files.filter((x) => DOC_EXT.test(x) && !KIT_DOCS.test(x))) {
+    const base = f.split('/').pop();
+    let sections = [];
+    if (/^(?:README|AGENTS|CLAUDE)\.md$/i.test(base) && !NORTH_DIR.test(f)) {
+      try { sections = [...fs.readFileSync(path.join(root, f), 'utf8').matchAll(/^README/i.test(base) ? NORTH_HEAD : AGENT_HEAD)].map((m) => m[1]); } catch { /* unreadable */ }
+      if (!sections.length) continue;
+    } else if (!NORTH_NAME.test(base.replace(DOC_EXT, '')) && !NORTH_DIR.test(f)) continue;
+    out.push({ file: f, sections: [...new Set(sections)] });
+  }
+  return out.slice(0, 10);
+}
+
 function stack(root) {
   const files = walk(root);
   const base = (f) => f.split('/').pop();
-  const manifests = files.filter((f) => MANIFESTS.test(base(f)));
+  const manifests = files.filter((f) => MANIFESTS.test(base(f)) || UNITY.test(f));
+  const unity = files.find((f) => f.endsWith('ProjectSettings/ProjectVersion.txt') && UNITY.test(f));
+  let engine = null;
+  if (unity) { try { engine = `Unity ${/^m_EditorVersion:\s*(\S+)/m.exec(fs.readFileSync(path.join(root, unity), 'utf8'))?.[1] || '(version unknown)'}`; } catch { engine = 'Unity'; } }
   const infra = files.filter((f) => INFRA.test(base(f)));
   const ci = CI.filter((c) => fs.existsSync(path.join(root, c)));
   const envNames = new Set();
@@ -47,8 +75,9 @@ function stack(root) {
     try { Object.assign(scripts, Object.fromEntries(Object.entries(JSON.parse(fs.readFileSync(path.join(root, f), 'utf8')).scripts || {}).map(([k]) => [`${f}:${k}`, true]))); } catch { /* unreadable */ }
   }
   return {
-    manifests, infra, ci, env_names: [...envNames].sort(), package_scripts: Object.keys(scripts),
+    manifests, engine, infra, ci, env_names: [...envNames].sort(), package_scripts: Object.keys(scripts),
     test_files: files.filter((f) => TEST_FILE.test(base(f)) || /(^|\/)(tests?|__tests__|spec)\//.test(f)).length,
+    north_star: northStar(root, files),
     claude_setup: ['CLAUDE.md', 'AGENTS.md', '.claude/settings.json', '.claude/skills', '.mcp.json', '.omc'].filter((p) => fs.existsSync(path.join(root, p))),
   };
 }
@@ -158,12 +187,15 @@ Read-only facts, gathered ${s.surveyed.slice(0, 10)}. Nothing in the project was
 - ${g.commits} commits since ${g.first_commit || '?'}, ${g.contributors ?? '?'} contributor(s), ${g.branches ?? '?'} local branch(es).
 - Uncommitted changes right now: ${g.uncommitted ?? '?'} file(s). These are left alone.
 - Building blocks found: ${st.manifests.join(', ') || 'none'}.
-- Hosting and infrastructure files: ${st.infra.join(', ') || 'none'}.
+${st.engine ? `- Engine: ${st.engine}.\n` : ''}- Hosting and infrastructure files: ${st.infra.join(', ') || 'none'}.
 - Automatic checks (CI): ${st.ci.join(', ') || 'none'}.
 - Test files: ${st.test_files}.
 - Settings names the app expects (values never read): ${st.env_names.join(', ') || 'none found'}.
 - Existing AI setup kept as is: ${st.claude_setup.join(', ') || 'none'}.
 
+## Existing north-star docs (vision, design doc, PRD)
+${list(st.north_star, (d) => `${d.file}${d.sections.length ? ` (sections: ${d.sections.join(', ')})` : ''}`)}
+${st.north_star?.length ? '- docs/PROJECT.md becomes a thin index that links to these (fk bible init --index <doc>); it never copies or contradicts them.\n' : ''}
 ## Where the work concentrates (last ${g.window_days} days)
 ${list(g.hotspots, (h) => `${h.file}: changed in ${h.commits} commits`)}
 

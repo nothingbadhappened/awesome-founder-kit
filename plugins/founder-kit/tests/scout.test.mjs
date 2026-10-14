@@ -9,11 +9,15 @@ import { makeFixture, runHook, outcome } from '../hooks/selftest.mjs';
 import { sanctionedJson, readJson, writeJson, refreshSnapshot } from '../hooks/lib.mjs';
 import { score, fetchSignals } from '../bin/cmd/score.mjs';
 import { check as interfere } from '../bin/cmd/interference.mjs';
+import { assess } from '../bin/cmd/risk.mjs';
 
 const FK = path.join(import.meta.dirname, '..', 'bin', 'fk.mjs');
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const dirs = [];
 const keep = (d) => { dirs.push(d); return d; };
+// FK_HOME is sandboxed by selftest.mjs; HOME and the Claude config folder are sandboxed here.
+const HOME = keep(tmp('fk-scout-home-'));
+Object.assign(process.env, { HOME, USERPROFILE: HOME, CLAUDE_CONFIG_DIR: path.join(HOME, '.claude') });
 test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 
 // SkillSpector mocks: `--version` works; a scan exits 0 (clean) or 1 (findings), like the real CLI.
@@ -368,4 +372,122 @@ test('provision installs a scanned skill and an MCP server through sanctioned pa
   assert.equal(fk(dir, ['provision', 'rollback', 'context7']).status, 0);
   assert.equal(sanctionedJson(dir, '.mcp.json', null)?.mcpServers?.['context7'], undefined);
   assert.equal(fk(dir, ['provision', 'rollback', 'context7']).status, 1, 'nothing left to roll back');
+});
+
+// ---------------- not only web: a Unity game, ESP32 firmware (made-up example projects) ----------------
+function unityDraft() {
+  return {
+    title: 'a 3D endless-runner game in Unity',
+    entries: [
+      { kind: 'runtime', name: 'unity-editor', version: '6000.0.23', present: true, capability: 'build per platform',
+        why: 'Builds the game for each platform from the command line.',
+        verify: 'Unity -batchmode -nographics -quit -projectPath . -buildTarget Android -executeMethod BuildScript.Build -logFile -' },
+      { kind: 'cli', name: 'git-lfs', version: '3.5.1', capability: 'version large assets', why: 'Keeps textures, audio and models out of the normal history so the repo stays fast.',
+        cost: 'Free', specs: ['github.gitlfs@3.5.1', 'git-lfs@3.5.1'],
+        install: { win32: 'winget install --id GitHub.GitLFS --version 3.5.1 -e', darwin: 'uv tool install git-lfs==3.5.1', linux: 'uv tool install git-lfs==3.5.1' },
+        verify: 'git lfs version', uninstall: { win32: 'winget uninstall --id GitHub.GitLFS', darwin: 'uv tool uninstall git-lfs', linux: 'uv tool uninstall git-lfs' },
+        score: scored(88), interference: { status: 'clean' } },
+      { kind: 'mcp', name: 'unity-mcp', version: '1.4.2', capability: 'drive the editor', why: 'Lets the agent open scenes, place objects and read the console in the editor.',
+        cost: 'Free', token_cost: '18 tools', mcp: { command: 'uvx', args: ['unity-mcp@1.4.2'] }, score: scored(80),
+        interference: { status: 'adapted', how: 'only its MCP server is used; its bundled Stop hook is left out' } },
+      { kind: 'account', name: 'mobile-store-developer', why: 'Publishing on a mobile store, needed only at release.', cost: '$99/year' },
+    ],
+    rules: ['C# and Unity component patterns', 'Unity Test Framework: play-mode and edit-mode tests', 'Unity .gitignore, .gitattributes and UnityYAMLMerge for scenes', 'asset and build-size budget'],
+    environment: { runtimes: [{ name: 'unity-editor', version: '6000.0.23', via: 'Unity Hub' }], isolation: 'project-local', env_vars: ['UNITY_LICENSE_SERIAL'], ports: [6400], disk: 'about 15 GB' },
+    conflicts: ['the repo already has its own agent rules (CLAUDE.md); they stay as they are'],
+    rejected: [{ name: 'unity-official-mcp-package', why: 'runner-up: the official package scored 77 against 80 and is still a preview' }],
+  };
+}
+function proposalFrom(title, body) {
+  const dir = keep(makeFixture());
+  const id = /proposal (\S+) created/.exec(fk(dir, ['scout', 'new', '--title', title]).stdout)[1];
+  writeJson(path.join(dir, 'draft.json'), body);
+  const a = fk(dir, ['scout', 'add', id, 'draft.json']);
+  assert.equal(a.status, 0, a.stdout);
+  assert.doesNotMatch(a.stdout, /Fix before rendering/, a.stdout);
+  const r = fk(dir, ['scout', 'render', id]);
+  assert.equal(r.status, 0, r.stdout);
+  return { dir, id, page: fs.readFileSync(path.join(dir, 'docs', 'process', 'toolchain-proposal.md'), 'utf8') };
+}
+
+test('scout: a Unity game proposal renders all 8 groups; approval lets install-guard allow exactly its entries', () => {
+  const { dir, id, page } = proposalFrom('a 3D endless-runner game in Unity', unityDraft());
+  for (const h of ['Already on your computer', 'Will install (free, local)', 'Will connect (AI tools)', 'Coding rules loaded', 'Your environment',
+    'Needs you later (paid or account)', 'Conflicts found and handled', 'Considered and rejected']) assert.match(page, new RegExp(`## ${h.replace(/[()]/g, '\\$&')}`), h);
+  assert.match(page, /\*\*unity-mcp 1\.4\.2\*\*/);
+  assert.match(page, /\*\*unity-official-mcp-package\*\*: runner-up/);
+  assert.match(page, /UnityYAMLMerge/);
+  const before = new Set(sanctionedJson(dir, '.fk/toolchain.json', null).approved);
+  approve(dir, `fk-approve proposal ${id}`);
+  assert.equal(approved(dir, id), true);
+  const added = sanctionedJson(dir, '.fk/toolchain.json', null).approved.filter((s) => !before.has(s));
+  assert.deepEqual(added.sort(), ['git-lfs@3.5.1', 'github.gitlfs@3.5.1', 'mcp:unity-mcp', 'unity-editor@6000.0.23']);
+  const bash = (command) => outcome(runHook(dir, 'PreToolUse', { tool_name: 'Bash', tool_input: { command } }));
+  assert.equal(bash('claude mcp add unity-mcp -- uvx unity-mcp@1.4.2'), 'allow');
+  assert.equal(bash('winget install --id GitHub.GitLFS --version 3.5.1 -e'), 'allow');
+  assert.equal(bash('uv tool install git-lfs==3.5.1'), 'allow');
+  assert.equal(bash('claude mcp add unity-official-mcp-package -- uvx unity-official@1.0.0'), 'deny', 'the runner-up is not approved');
+  assert.equal(bash('uv tool install git-lfs==3.6.0'), 'deny', 'another version is not approved');
+});
+
+test('interference: a "unity-agent-rules" plugin with its own planner, a Stop hook and a CLAUDE.md writer is adapted or rejected, never clean', () => {
+  const plugin = (domain) => {
+    const d = keep(tmp('fk-cand-'));
+    write(d, '.claude-plugin/plugin.json', JSON.stringify({ name: 'unity-agent-rules', version: '2.0.0' }));
+    write(d, 'agents/planner.md', '---\nname: planner\ndescription: Plans every Unity task before execution.\n---\nPlan.\n');
+    write(d, 'hooks/hooks.json', JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'node hooks/stop.js' }] }] } }));
+    write(d, 'scripts/install.js', "require('fs').writeFileSync('CLAUDE.md', '# Unity agent rules');\n");
+    if (domain) write(d, 'skills/unity-prefabs/SKILL.md', SKILL('unity-prefabs', 'Use when creating or editing Unity prefabs and prefab variants.'));
+    write(d, 'LICENSE', 'MIT License\n');
+    return d;
+  };
+  const r = withEnv(ENV, () => interfere(plugin(true)));
+  assert.equal(r.status, 'adapted');
+  const checks = r.findings.map((f) => f.check);
+  for (const c of ['role overlap', 'hook overlap', 'instruction files']) assert.ok(checks.includes(c), c);
+  assert.deepEqual(r.parts.skills, ['unity-prefabs']);
+  assert.equal(withEnv(ENV, () => interfere(plugin(false))).status, 'rejected');
+});
+
+test('scout: an ESP32 firmware proposal with only command-line tools and no MCP server validates and renders', () => {
+  const { page } = proposalFrom('an ESP32 plant-watering sensor', { entries: [
+    { kind: 'cli', name: 'platformio', version: '6.1.16', capability: 'build, flash and serial monitor', why: 'Builds the firmware, flashes the board and shows its serial log.', cost: 'Free',
+      install: 'uv tool install platformio==6.1.16', verify: 'pio --version', uninstall: 'uv tool uninstall platformio', score: scored(86), interference: { status: 'clean' } },
+    { kind: 'service', name: 'hardware-check', why: 'You run the test firmware on the real board and confirm the pump switches; an agent cannot.', needs_account: true },
+  ], rules: ['C++ firmware patterns', 'host-side unit tests (pio test -e native)'],
+  environment: { runtimes: [], isolation: 'project-local', env_vars: [], ports: [], disk: 'about 1 GB' },
+  rejected: [{ name: 'embedded-mcp', why: 'low trust for flashing hardware; the vendor CLI does the same job' }] });
+  assert.match(page, /\*\*platformio 6\.1\.16\*\*/);
+  assert.match(page, /\*\*hardware-check\*\*/);
+  assert.doesNotMatch(page, /## Will connect/, 'no MCP servers is fine');
+});
+
+test('fk risk on a Unity project: scripts and scenes R1, settings not R3, save code not R3 by its name, a new package R2', () => {
+  const g = (cwd, ...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...a], { cwd, encoding: 'utf8' });
+  const BASE = {
+    'Packages/manifest.json': '{\n  "dependencies": {\n    "com.unity.inputsystem": "1.7.0"\n  }\n}\n',
+    'ProjectSettings/ProjectSettings.asset': '%YAML 1.1\nPlayerSettings:\n  productName: Runner\n  bundleVersion: 0.1\n',
+    'Assets/Scripts/Save/SaveSystem.cs': 'public static class SaveSystem { }\n',
+  };
+  const unity = () => {
+    const dir = keep(tmp('fk-unity-'));
+    g(dir, 'init', '-q'); g(dir, 'checkout', '-q', '-b', 'main');
+    for (const [f, t] of Object.entries(BASE)) write(dir, f, t);
+    g(dir, 'add', '-A'); g(dir, 'commit', '-qm', 'init'); g(dir, 'checkout', '-q', '-b', 'feat');
+    return dir;
+  };
+  const cases = [
+    ['Assets/Scripts/PlayerController.cs', 'public class PlayerController { float speed = 6f; }\n', ['R1']],
+    ['Assets/Scenes/Main.unity', '%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: Player\n', ['R1']],
+    ['ProjectSettings/ProjectSettings.asset', '%YAML 1.1\nPlayerSettings:\n  productName: Runner\n  bundleVersion: 0.2\n', ['R1', 'R2']],
+    ['Assets/Scripts/Save/SaveSystem.cs', 'public static class SaveSystem { public static void Write(string json) { } }\n', ['R1', 'R2']],
+    ['Packages/manifest.json', '{\n  "dependencies": {\n    "com.unity.inputsystem": "1.7.0",\n    "com.unity.test-framework": "1.4.5"\n  }\n}\n', ['R2']],
+  ];
+  for (const [f, text, want] of cases) {
+    const dir = unity();
+    write(dir, f, text);
+    const r = assess(dir);
+    assert.ok(want.includes(r.class), `${f}: ${r.class}: ${r.reasons.join('; ')}`);
+    if (f.endsWith('manifest.json')) assert.ok(r.reasons.some((x) => /new dependencies: com\.unity\.test-framework/.test(x)), r.reasons.join('\n'));
+  }
 });

@@ -19,11 +19,16 @@ Re-run the survey with `--days N` or `--min-pair N` when the history is short or
 | Draft | Lands in |
 |---|---|
 | `00-constraints.md` | `docs/00-constraints.md` (or `paths.constraints`) |
+| `PROJECT.md` | `docs/PROJECT.md` |
 | `adr/*.md` | `docs/adr/` (or `paths.adr`) |
 | `lessons.md` | `docs/process/lessons.md` |
 | `impact-map.yaml` | `docs/standards/impact-map.yaml` |
 
 `health.md` stays in the adopt workspace `drafts/` as the approval record.
+
+Bible in index mode: per section up to 3 lines plus `Source of truth: <doc> §<section>`; apply records `bible_mode: index`.
+
+`fk adopt apply` also runs `fk init`, records running containers as pre-existing in the ledger, records `.fk/baseline.json`, and adds the bible line to `CLAUDE.md` within its 40-line budget.
 
 ## Health report
 One page, plain words, no jargon without a one-line explanation. Order:

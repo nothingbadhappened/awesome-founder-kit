@@ -75,10 +75,12 @@ function Install-FounderKit {
   }
   function Get-MempalaceDir {
     if ($env:MEMPALACE_CONFIG_DIR) { return $env:MEMPALACE_CONFIG_DIR }
-    $legacy = Join-Path $HOME '.mempalace'
+    # PowerShell's $HOME ignores an overridden USERPROFILE/HOME (sandboxes, tests); the printed path follows them.
+    $userHome = @($env:USERPROFILE, $env:HOME, $HOME) | Where-Object { $_ } | Select-Object -First 1
+    $legacy = Join-Path $userHome '.mempalace'
     foreach ($f in 'config.json', 'people_map.json', 'palace\chroma.sqlite3') { if (Test-Path (Join-Path $legacy $f)) { return $legacy } }
     if ($env:XDG_CONFIG_HOME) { return (Join-Path $env:XDG_CONFIG_HOME 'mempalace') }
-    return (Join-Path $HOME '.config\mempalace')
+    return (Join-Path $userHome '.config\mempalace')
   }
 
   function New-Row($id, $label, $size, $why) {
@@ -145,7 +147,8 @@ function Install-FounderKit {
       if ($r.version) { $have = (& codebase-memory-mcp config get $key 2>$null | Out-String).Trim() }
       if ($r.version -and $have -eq 'false') { continue }
       $r.steps += @{ action = 'configure'; cmd = "codebase-memory-mcp config set $key false"; rollback = "codebase-memory-mcp config set $key true" }
-      if ($r.version -and $r.level -ne 'red') { $r.level = 'red'; $r.reason = 'not-configured'; $r.note = "$key is $have; the kit keeps it false so indexing runs only when asked" }
+      $shown = if ($have) { $have } else { 'not set' }
+      if ($r.version -and $r.level -ne 'red') { $r.level = 'red'; $r.reason = 'not-configured'; $r.note = "$key is $shown; the kit keeps it false so indexing runs only when asked" }
     }
     $rows += $r
 

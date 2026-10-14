@@ -32,6 +32,11 @@ Standards go into drydock's slots; the skill only points at them.
 | `lessons.md` | `docs/process/lessons.md` |
 | `task-spec.md`, `adr.md` | `.claude/skills/<project>-dev/templates/` as is (`fk task new` fills the `{{…}}` of task-spec.md; skip it in the placeholder search) |
 
+## ADRs
+- `applies_to:` globs of the folders the decision governs: tasks there cite it, a first edit there is reminded of it.
+- `bible:` the `docs/PROJECT.md` sections it changes (mission, users, non-negotiables, principles, architecture); the task that accepts it updates them and runs `fk bible touch`.
+- `fit:` its import boundaries (`forbid_import`), required files (`require_file`) and banned paths (`forbid_path`), compiled by `fk gates build`.
+
 ## Why (for reviewers)
 - Thin skill: OMC already plans, executes, verifies and reviews; a second procedure competes with it and gets ignored. The skill holds only facts, risk mapping and gate rules.
 - Bootstrap mode: on an empty repo gates can't run; without it agents fake evidence or write "N/A". R0 lane: heavy process for typo fixes invites skipping.

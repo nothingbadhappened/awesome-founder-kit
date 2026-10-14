@@ -193,6 +193,15 @@ export function protectedClass(root, rel) {
   return null;
 }
 
+// Path classes shared by fk risk and the knowledge notes: docs and tests change no behaviour.
+const DOC = /(?:^|\/)docs?\/|\.(?:md|mdx|markdown|txt|rst|adoc)$|(?:^|\/)(?:LICENSE|CHANGELOG|AUTHORS)[^/]*$/i;
+const TEST = /(?:^|\/)(?:tests?|__tests__|spec|specs|fixtures|e2e)\/|[._-](?:test|spec)\.[\w]+$|\.spec\.|_test\.go$|(?:^|\/)(?:test_[^/]+|tests?|conftest)\.py$/i;
+const JAVA_TEST = /[a-z0-9]Tests?\.(?:java|kt)$/; // FooTest.java (case matters: not latest.java)
+export const MANIFEST = /(?:^|\/)(?:package\.json|Packages\/manifest\.json|requirements[\w.-]*\.txt|pyproject\.toml|Pipfile|Cargo\.toml|go\.mod|Gemfile|composer\.json|build\.gradle(?:\.kts)?|pom\.xml)$/;
+const CMAKE = /(?:^|\/)CMakeLists\.txt$/i;
+// Docs and tests change no behaviour; a manifest that ends in .txt (requirements.txt, CMakeLists.txt) does.
+export const quietPath = (p) => (DOC.test(p) && !MANIFEST.test(p) && !CMAKE.test(p)) || TEST.test(p) || JAVA_TEST.test(p);
+
 // pyproject.toml is only a gate file for its [tool.*] sections, minus the packaging tools (dependencies and build
 // settings are not gates).
 const PY_PACKAGING = /^tool\.(?:poetry|uv|pdm|hatch|setuptools|setuptools_scm|maturin|scikit-build|flit)(?:\.|$)/i;

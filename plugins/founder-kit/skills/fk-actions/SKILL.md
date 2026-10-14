@@ -16,7 +16,7 @@ One batched checklist in `docs/process/founder-actions.md`. Agents never do thes
 ## What goes on it
 - Accounts to create, with sign-up links.
 - Keys to put in `.env`, by name, from `.env.example`.
-- Billing caps per provider (from the catalog), with `fk budget plan <provider> <usd>` and the record line `fk-approve budget <provider> <usd> [hard-cap]`. Alert-only providers need a written reason.
+- Only for paid cloud or API services: billing caps per provider (from the catalog), with `fk budget plan <provider> <usd>` and the record line `fk-approve budget <provider> <usd> [hard-cap]`. Alert-only providers need a written reason.
 - Claude billing: if `ANTHROPIC_API_KEY` is set, suggest a Console workspace with a monthly limit.
 - Production deploys, store submissions, merges to main.
 - Gate relaxations an agent asked for; the founder decides with `fk-override gate <reason>` or leaves it.

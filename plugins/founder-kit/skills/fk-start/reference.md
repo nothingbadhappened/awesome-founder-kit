@@ -1,6 +1,7 @@
 # fk-start reference
 
 ## Status
+Each step: date, link, `running`/`done`; background agents with their target file.
 ```
 # Kickoff status
 - [ ] 0 Base tools — fk setup, fk doctor → docs/process/toolkit.md
@@ -9,6 +10,7 @@
 - [ ] 3 Constraints + project shape — docs/00-constraints.md; fk kickoff release
 - [ ] 4 Reviews — docs/01-business-review.md, docs/02-architecture.md   (agents: …)
 - [ ] 5 Decisions — docs/adr/
+- [ ] 5b Bible — docs/PROJECT.md (fk bible check), parent link if any
 - [ ] 6 Tools — docs/research/, toolchain proposal approved, fk provision done
 - [ ] 7 Dev process — docs/standards/*, .claude/skills/<project>-dev/
 - [ ] 8 Brand — design-system/ (skip if no UI)
@@ -16,6 +18,13 @@
 - [ ] 10 Key facts — CLAUDE.md
 - [ ] 11 First build task — docs/tasks/
 ```
+
+## Bible
+- Already have a vision doc, GDD or PRD? `fk bible init --index <doc>` makes `docs/PROJECT.md` a thin index of that doc instead.
+- Part of a bigger project? Ask once in plain words; then `fk config set parent <folder or URL>` and name it under "Above this project".
+
+## Protection
+`fk kickoff protect` turns OMC's autopilot/ralph keywords off until the constraints exist. Record it as an ADR "kickoff protection, removed after constraints"; step 3 releases it (`fk kickoff release`) and marks that ADR superseded.
 
 ## Toolbox
 List agent types, skills and MCP servers into `docs/process/toolkit.md`, then:

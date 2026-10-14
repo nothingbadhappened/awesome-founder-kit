@@ -14,6 +14,7 @@ description: "Use after a failed gate, reviewer REVISE, rollback or founder corr
    `fk lessons add --title "<root cause, short>" --what "<symptom and cause>" --lesson "<what to do instead>" --severity low|med|high --paths "<globs touched>" --context "<task or PR>" --evidence "<commit, log or transcript link>"`
    - A matching lesson is bumped (`seen:` +1) instead of duplicated. If the match is wrong, re-run with `--new`.
    - Severity high = security, privacy, money, data loss, or work blocked.
+   - `--paths`: the narrowest globs where it can recur (e.g. `src/billing/**`); tasks there list it in Context and the first edit there shows it. `**` shows it nowhere.
 4. To count a recurrence directly: `fk lessons bump <number|title words> --evidence "<link>"`.
 
 ## Promote (a different agent)

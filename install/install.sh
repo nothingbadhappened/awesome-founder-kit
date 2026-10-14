@@ -164,7 +164,7 @@ state() {
     [ -n "${VERSIONS[$i]}" ] && have=$(codebase-memory-mcp config get "$key" 2>/dev/null | tr -d '[:space:]')
     [ -n "${VERSIONS[$i]}" ] && [ "$have" = false ] && continue
     step codebase-memory-mcp configure "codebase-memory-mcp config set $key false" "codebase-memory-mcp config set $key true"
-    if [ -n "${VERSIONS[$i]}" ] && [ "${LEVELS[$i]}" != red ]; then set_red not-configured "$key is $have; the kit keeps it false so indexing runs only when asked"; fi
+    if [ -n "${VERSIONS[$i]}" ] && [ "${LEVELS[$i]}" != red ]; then set_red not-configured "$key is ${have:-not set}; the kit keeps it false so indexing runs only when asked"; fi
   done
 
   row mempalace MemPalace "about 500 MB" "remembers decisions between sessions, on your machine only" "$(ver mempalace --version)"
