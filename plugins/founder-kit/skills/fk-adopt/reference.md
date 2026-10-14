@@ -56,6 +56,6 @@ One page, plain words, no jargon without a one-line explanation. Order:
 5. Remediation backlog: ranked `R2`/`R1` items, each small enough for one OMC task.
 
 ## Baseline ratchet
-- `fk baseline record` stores one number per gate (`check`, `fast_gates`, or `--gate name=cmd`) plus the gitleaks history count.
-- `fk baseline check` fails when a count goes up or coverage goes down; improvements become the new baseline (`--no-tighten` to only report).
+- `fk baseline record` stores one number per gate (`check`, `fast_gates`, or `--gate name=cmd`) plus the gitleaks history count. The first record is free; replacing an existing baseline needs the founder's typed `fk-approve baseline <reason>` (once, 30 minutes).
+- `fk baseline check` fails when a count goes up or coverage goes down; improvements become the new baseline (`--no-tighten` to only report). Only a check of the configured gates (no `--gate`) whose every command exits 0 counts as a green gate run for `fk task check`.
 - A gate whose output the CLI cannot count falls back to pass/fail (0 or 1).

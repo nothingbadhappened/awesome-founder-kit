@@ -18,7 +18,7 @@ const RESERVED = ['plan', 'execute', 'review', 'verify', 'research', 'tdd', 'deb
   'autopilot', 'security-review', 'code-review', 'simplify', 'init'];
 // Generic shapes of personal data (no literal names): a mail address, a user home, a non-system absolute drive path.
 const PRIVATE = [/@gmail\.com/i, /[A-Z]:\\Users\\(?!<|you\b|name\b|runneradmin\b)[A-Za-z0-9]/,
-  /\/(?:home|Users)\/(?!<|you\b|name\b|runner\b)[a-z0-9]/, /\b[A-Z]:[\\/](?!<|Users[\\/](?:<|you\b|name\b|runneradmin\b)|Windows\b|Program Files\b|x\b)[A-Za-z]/];
+  /\/(?:home|Users)\/(?!<|you\b|name\b|runner\b|cwd\b)[a-z0-9]/, /\b[A-Z]:[\\/](?!<|Users[\\/](?:<|you\b|name\b|runneradmin\b)|Windows\b|Program Files\b|x\b)[A-Za-z]/];
 
 const plugins = fs.readdirSync(PLUGINS, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
 const skills = plugins.flatMap((plugin) => {
@@ -171,5 +171,5 @@ test('no personal data in tracked files', () => {
 test('personal-data patterns: planted samples hit, placeholders do not', () => {
   const hit = (s) => PRIVATE.some((re) => re.test(s));
   for (const s of ['a.b@gmail.com', 'C:\\Users\\alice\\x', '/home/alice/x', '/Users/bob/x', 'E:/work/app']) assert.ok(hit(s), s);
-  for (const s of ['C:\\Users\\<you>\\x', '/home/runner/work', '/Users/<name>/x', 'C:\\Windows\\System32', 'C:\\Program Files\\Git', 'https://x.io/a']) assert.ok(!hit(s), s);
+  for (const s of ['C:\\Users\\<you>\\x', '/home/runner/work', '<run>/home/cwd', '/Users/<name>/x', 'C:\\Windows\\System32', 'C:\\Program Files\\Git', 'https://x.io/a']) assert.ok(!hit(s), s);
 });

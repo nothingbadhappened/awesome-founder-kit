@@ -1,18 +1,20 @@
 // `fk setup`: check, install, configure and verify the kit's base tools from compat.lock.json.
 // Read-only until the founder says yes; every change goes to ~/.fk/install-ledger.jsonl with a rollback hint;
-// the result goes to ~/.fk/base-tools.json, which the SessionStart note (hooks/session/10-base-tools.mjs) reads.
+// the result goes to ~/.fk/state/base-tools.json, which the SessionStart note (hooks/session/10-base-tools.mjs) reads.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readJson, writeJson, cmpVer, omcPlugin, omcStatus, fetchOmcLatest, OMC_UPDATE, fkHome } from '../../../hooks/lib.mjs';
+import { readJson, writeJson, cmpVer, omcPlugin, omcStatus, fetchOmcLatest, OMC_UPDATE, fkHome, homeCache } from '../../../hooks/lib.mjs';
 import { installSteps, pluginSteps, palaceInitStep, machineSteps, FOUNDER } from './recipes.mjs';
+import { appendLedger, ledgerFile, tilde, readLedger, itemStates } from './ledger.mjs';
+
+export { appendLedger, ledgerFile };
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 export const loadLock = () => readJson(path.join(KIT, 'compat.lock.json'), null);
-export const statusFile = () => path.join(fkHome(), 'base-tools.json');
-export const ledgerFile = () => path.join(fkHome(), 'install-ledger.jsonl');
+export const statusFile = () => homeCache('base-tools.json');
 export const osName = (p = process.platform) => (p === 'win32' ? 'win' : p === 'darwin' ? 'mac' : 'linux');
 
 // Order matters: later tools install with earlier ones (uv before MemPalace, claude before plugins).
@@ -99,13 +101,21 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
   const hasM = (bin) => (bin === 'mise' ? mise() : has(bin));
   for (const tool of TOOLS) {
     const spec = lock.tools[tool.id];
-    const row = { id: tool.id, label: tool.label, why: tool.why, size: tool.size, version: null, level: 'green', reason: 'ok', note: '', steps: [] };
+    // found: what was already in place before this run (the ledger records it as pre-existing: never removed by the kit).
+    const row = { id: tool.id, label: tool.label, why: tool.why, size: tool.size, version: null, level: 'green', reason: 'ok', note: '', steps: [], found: [] };
+    const found = (item, extra = {}) => row.found.push({ item, tool: tool.id, ...extra });
     const add = (action, list) => row.steps.push(...list.map((s) => ({ action, tool: tool.id, ...s })));
 
     if (tool.id === 'podman' || tool.id === 'podman-compose') {
       containers ??= containerState(env, o);
-      if (tool.id === 'podman') containerRow(row, spec, containers, { env, o, has, lock, add });
-      else composeRow(row, spec, containers, { env, o, lock, add });
+      if (tool.id === 'podman') {
+        containerRow(row, spec, containers, { env, o, has, lock, add });
+        if (containers.engine) found(containers.engine, { version: containers.version });
+        if (containers.machine?.exists) found('podman:machine');
+      } else {
+        composeRow(row, spec, containers, { env, o, lock, add });
+        if (row.version) found(tool.id, { version: row.version });
+      }
       rows.push(row);
       continue;
     }
@@ -114,6 +124,9 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
       const plugin = omcPlugin();
       const npm = plugin ? null : probe('omc', ['--version'], env); // the plugin copy wins when both are present
       row.version = plugin?.version || npm?.version || null;
+      if (plugin) found('oh-my-claudecode:plugin', { version: plugin.version, how: 'claude plugin' });
+      else if (npm) found('oh-my-claudecode', { version: npm.version, how: 'npm' });
+      if (marketplaceAdded(spec.marketplace)) found('oh-my-claudecode:marketplace', { how: 'claude plugin' });
       if (npm) {
         // npm mode is supported. Adding the plugin copy too would fire OMC's hooks twice until `omc setup` dedupes them,
         // so the kit never adds it on its own.
@@ -147,6 +160,7 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
       if (m?.version && (!p?.version || cmpVer(m.version, p.version) > 0)) { p = m; row.via = 'mise'; }
     }
     row.version = p?.version || null;
+    if (row.version) found(tool.id, { version: row.version, ...(row.via === 'mise' ? { how: 'mise' } : {}) });
     const [level, reason] = grade(row.version, spec);
     Object.assign(row, { level, reason });
     if (reason === 'missing') row.note = 'not installed';
@@ -164,6 +178,7 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
     if (tool.id === 'git-lfs') {
       // `git lfs install` (user level) adds the LFS filters to ~/.gitconfig once.
       const on = p && probe('git', ['config', '--global', '--get', 'filter.lfs.process'], env)?.out;
+      if (on) found('git-lfs:config');
       if (!on) {
         add('configure', [{ cmd: 'git lfs install', rollback: 'git lfs uninstall' }]);
         if (p && row.level !== 'red') Object.assign(row, { level: 'red', reason: 'not-configured', note: 'not switched on for your user yet (git lfs install)' });
@@ -173,7 +188,7 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
     if (tool.id === 'codebase-memory-mcp') {
       for (const [key, want] of Object.entries(spec.config)) {
         const have = p ? probe(tool.bin, ['config', 'get', key], env)?.out : null;
-        if (p && have === want) continue;
+        if (p && have === want) { found(`codebase-memory-mcp:${key}`); continue; }
         add('configure', [{ cmd: `codebase-memory-mcp config set ${key} ${want}`, rollback: `codebase-memory-mcp config set ${key} ${have || 'true'}` }]);
         if (p && row.level !== 'red') Object.assign(row, { level: 'red', reason: 'not-configured', note: `${key} is ${have || 'not set'}; the kit keeps it ${want} so indexing runs only when asked` });
       }
@@ -181,6 +196,8 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
 
     if (tool.id === 'mempalace') {
       const ps = pluginState(spec);
+      if (ps.pluginInstalled) found('mempalace:plugin', { how: 'claude plugin' });
+      if (ps.marketplaceAdded) found('mempalace:marketplace', { how: 'claude plugin' });
       if (!ps.pluginInstalled || !ps.marketplaceAdded) {
         add('install', pluginSteps(spec, ps));
         if (row.level !== 'red') Object.assign(row, { level: 'red', reason: 'plugin-missing', note: 'the Claude Code plugin is not installed' });
@@ -189,13 +206,15 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
       const cfg = readJson(path.join(dir, 'config.json'), null);
       const palace = cfg?.palace_path || path.join(dir, 'palace');
       const notes = [];
+      if (fs.existsSync(palace)) found('mempalace:palace');
+      if (cfg?.hooks?.silent_save !== undefined) found('mempalace:silent-save');
       if (!fs.existsSync(palace)) {
         add('configure', [palaceInitStep(lock, o, path.join(fkHome(), 'palace-home'))]);
         if (row.level !== 'red') Object.assign(row, { level: 'red', reason: 'not-configured', note: 'no palace yet' });
       } else if ((cfg?.backend || 'chroma') !== spec.backend) notes.push(`your existing palace uses the ${cfg?.backend || 'chroma'} backend; kept as is (switching needs a migration)`);
       if (cfg?.hooks?.silent_save === false) notes.push('hooks.silent_save is off (your choice; kept)');
       else if (cfg?.hooks?.silent_save === undefined) {
-        add('configure', [{ fn: 'silent-save', cmd: `set hooks.silent_save = true in ${path.join(dir, 'config.json')}`, rollback: 'remove "hooks.silent_save" from that config.json' }]);
+        add('configure', [{ fn: 'silent-save', cmd: `set hooks.silent_save = true in ${path.join(dir, 'config.json')}`, rollback: 'remove "hooks.silent_save" from that config.json', file: tilde(path.join(dir, 'config.json')) }]);
       }
       if (env.MEMPAL_DIR) notes.push('MEMPAL_DIR is set, so MemPalace mines that folder on every save; the kit recommends unsetting it');
       if (notes.length) {
@@ -307,11 +326,7 @@ export const FNS = {
     return true;
   },
 };
-
-export function appendLedger(entry) {
-  fs.mkdirSync(path.dirname(ledgerFile()), { recursive: true });
-  fs.appendFileSync(ledgerFile(), JSON.stringify({ ts: new Date().toISOString(), via: 'fk setup', ...entry }) + '\n');
-}
+export const shimMarked = (f) => ours(f);
 
 export function writeStatus(rows, lock) {
   // engine/machine: the steward's weekly note reads them (cache only); founder: steps only the founder can take (fk actions).
@@ -373,24 +388,52 @@ export function winUserPath(dir) {
   return /added/.test(r.stdout || '');
 }
 
+// Windows: is dir on the user Path (HKCU\Environment)? remove: take exactly that entry out again (fk uninstall --system).
+export function winUserPathEntry(dir, { remove = false } = {}) {
+  const ps = `$d='${dir.replace(/'/g, "''")}'.TrimEnd('\\'); $k=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment'); `
+    + "$p=[string]$k.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); "
+    + "$parts=@($p -split ';' | Where-Object { $_ }); $keep=@($parts | Where-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\\') -ne $d }); "
+    + (remove ? "if ($keep.Count -ne $parts.Count) { $k.SetValue('Path', ($keep -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString); "
+      + "[Environment]::SetEnvironmentVariable('FK_PATH_REFRESH', '1', 'User'); [Environment]::SetEnvironmentVariable('FK_PATH_REFRESH', $null, 'User') }; 'absent'"
+      : "if ($keep.Count -ne $parts.Count) { 'present' } else { 'absent' }");
+  const r = spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true });
+  return /present/.test(r.stdout || '');
+}
+
 // Returns plain lines for the founder. Never overwrites an `fk` that is not ours.
 export function shim(action, { home = os.homedir(), win = WIN, env = process.env, userPath = winUserPath, dry = false } = {}) {
   const { bin, js, files } = shimPaths(home, win);
   if (dry) return [`fk command (dry run): would ${action === 'remove' ? 'remove' : 'write'} ${[js, ...Object.keys(files)].join(', ')}. Nothing was changed.`];
+  const live = itemStates(readLedger());
+  const ledger = (item, kind, extra = {}) => appendLedger({ tool: 'fk-shim', item, kind, action: kind === 'removed' ? 'remove' : 'install', version: null, scope: 'user', ok: true, ...extra });
   if (action === 'remove') {
     const gone = [js, ...Object.keys(files)].filter((f) => ours(f) && (fs.rmSync(f), true));
+    if (gone.length && live.get('fk-shim')?.state === 'installed') ledger('fk-shim', 'removed', { how: 'script', undo: null });
     return [gone.length ? `fk command removed (${gone.length} file(s)). ${bin} stays on PATH (other tools use it).` : 'fk command: no shim to remove.'];
   }
   const out = [];
+  const written = [];
+  if (!fs.existsSync(js)) written.push(js);
   fs.mkdirSync(path.dirname(js), { recursive: true });
   fs.writeFileSync(js, SHIM_JS);
   for (const [f, text] of Object.entries(files)) {
     if (fs.existsSync(f) && !ours(f)) { out.push(`fk command: kept your own ${f}; the kit did not replace it.`); continue; }
+    if (!fs.existsSync(f)) written.push(f);
     fs.mkdirSync(bin, { recursive: true });
     fs.writeFileSync(f, text, { mode: 0o755 });
   }
+  // The ledger: the shim files are the kit's (fk uninstall --system removes exactly these); the PATH entry only when added here.
+  if (written.length && live.get('fk-shim')?.state !== 'installed') {
+    const paths = [js, ...Object.keys(files)].map((f) => tilde(f, home));
+    ledger('fk-shim', 'installed', { how: 'script', command: 'fk setup --shim', undo: `remove ${paths.join(' ')}`, paths });
+  }
   const onPath = String(env.PATH || env.Path || '').split(path.delimiter).some((p) => path.resolve(p || '.').toLowerCase() === bin.toLowerCase());
-  if (win) { if (userPath(bin)) out.push(`fk command: added ${bin} to your user PATH (new terminals pick it up).`); }
+  if (win) {
+    if (userPath(bin)) {
+      out.push(`fk command: added ${bin} to your user PATH (new terminals pick it up).`);
+      ledger('fk-shim:path', 'configured', { how: 'user PATH', command: `add ${tilde(bin, home)} to the user PATH`, undo: `remove ${tilde(bin, home)} from your user PATH`, fn: 'user-path', dir: tilde(bin, home) });
+    }
+  }
   else if (!onPath) out.push(`fk command: add this line to ~/.profile (or ~/.zshrc), then open a new terminal: export PATH="$HOME/.local/bin:$PATH"`);
   out.unshift(`fk command: ready (${path.join(bin, 'fk')}; it finds the installed kit by itself; undo: fk setup --remove-shim).`);
   return out;

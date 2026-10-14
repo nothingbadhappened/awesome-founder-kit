@@ -6,7 +6,10 @@ import { spawnSync } from 'node:child_process';
 import { writeJson, refreshSnapshot, takeSnapshot, log, RUNTIME } from '../../../hooks/lib.mjs';
 
 export const say = (s = '') => process.stdout.write(s + '\n');
-export const today = (flags = {}) => flags.today || process.env.FK_TODAY || new Date().toLocaleDateString('sv');
+// --today / FK_TODAY pin the date only in tests (node --test sets NODE_TEST_CONTEXT; FK_TEST for other runners): dates in
+// records (task created, lessons, bible marks) are evidence, so an agent cannot back- or forward-date them.
+const testing = () => !!(process.env.NODE_TEST_CONTEXT || process.env.FK_TEST);
+export const today = (flags = {}) => (testing() && (flags.today || process.env.FK_TODAY)) || new Date().toLocaleDateString('sv');
 
 export const git = (root, args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 // A tool on PATH? npm shims (.cmd) need a shell on Windows; real binaries do not.

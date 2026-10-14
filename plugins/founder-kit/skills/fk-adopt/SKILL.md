@@ -38,7 +38,7 @@ Until `fk adopt apply`, nothing in the repo changes: work lives in the kit state
 ## A5 Install with a baseline ratchet
 15. Set the gate commands the project already has: `fk config set check "<command>"` (and `fast_gates`) after `fk init` if needed.
 16. Run `fk adopt apply` (`--annotate` only after a yes in step 14; other git hooks paths: reference.md §Drafts). Agent rule files are never rewritten: offer the pointer section `compile` printed.
-17. If the gates changed, run `fk baseline record` again; `fk baseline check` then fails only on new problems.
+17. The first `fk baseline record` (done by `fk adopt apply`) needs no approval. Recording again (gates changed) needs the founder to type alone `fk-approve baseline <reason>`; then run `fk baseline record`. `fk baseline check` fails only on new problems.
 18. Run `fk memory setup` to limit memory tools here.
 
 ## A6 Work in progress

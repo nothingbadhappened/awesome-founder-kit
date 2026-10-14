@@ -49,7 +49,7 @@ function add(root, id, draftPath) {
   save(root, rel.proposal(id), p);
   fs.rmSync(path.join(root, rel.render(id)), { force: true }); // any earlier render no longer matches
   refreshSnapshot(root, [rel.render(id)]);
-  const errors = validate(p, { existingMcp: existingMcp(root) });
+  const errors = validate(p, { existingMcp: existingMcp(root), root });
   say(`fk scout: ${id} now has ${p.entries.length} entries, ${p.rejected.length} rejected.`);
   if (errors.length) say(`Fix before rendering:\n- ${errors.join('\n- ')}`);
 }
@@ -58,7 +58,7 @@ function render(root, id) {
   const p = getProposal(root, id);
   if (!p) return;
   if (fs.existsSync(path.join(root, rel.approval(id)))) return fail(`fk scout: ${id} is already approved. Changes go in a delta proposal: fk scout new --delta`);
-  const errors = validate(p, { existingMcp: existingMcp(root) });
+  const errors = validate(p, { existingMcp: existingMcp(root), root });
   if (errors.length) return fail(`fk scout: ${id} is not ready:\n- ${errors.join('\n- ')}`);
   const hash = fileHash(root, rel.proposal(id));
   const page = path.join(root, PAGE);

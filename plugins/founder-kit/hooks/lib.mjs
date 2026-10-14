@@ -4,10 +4,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 export const GUARDS = ['secret-guard', 'gate-guard', 'install-guard', 'cloud-guard', 'git-guard'];
-// Names a founder may override with `fk-override <name> <reason>`: the guards plus task-check (read by `fk task done`).
-export const OVERRIDABLE = [...GUARDS, 'task-check'];
+// Names a founder may override with `fk-override <name> <reason>`: the guards, task-check (read by `fk task done`)
+// and kickoff (`fk kickoff release` before docs/00-constraints.md is committed).
+export const OVERRIDABLE = [...GUARDS, 'task-check', 'kickoff'];
 export const FAIL_CLOSED = new Set(['secret-guard', 'gate-guard', 'install-guard']);
 // .fk/.gitignore: kit-written files that never belong in a commit (hook state lives outside the repo, see stateDir).
 export const RUNTIME = ['ledger.jsonl', 'steward.json', 'adopt/', 'quarantine/'];
@@ -28,7 +30,8 @@ export const DEFAULT_CONFIG = {
 // config: additions allowed unless an added line reads as loosening.
 // soft: edits allowed unless they add a loosening line or drop a strictness/test/check line.
 export const PROTECTED = {
-  strict: ['.fk/**', '.mcp.json', '.claude/settings*.json', '.claude/omc.jsonc'],
+  // .claude/agents/**: a project agent could carry a reviewer's name (fk task counts reviews by agent name).
+  strict: ['.fk/**', '.mcp.json', '.claude/settings*.json', '.claude/omc.jsonc', '.claude/agents/**'],
   exceptions: ['**/.eslintignore', '**/.prettierignore', '**/.gitleaksignore', '**/.semgrepignore', '**/.stylelintignore'],
   config: [
     '.githooks/**', '.husky/**',
@@ -96,8 +99,13 @@ export function loadConfig(root) {
 }
 
 // ---- hook-owned state (snapshots, overrides, compliance log) lives outside the repo, in <home>/.fk/state/<root hash>/,
-// so nothing a tool does inside the project resets or forges it. FK_HOME moves <home>/.fk (tests).
+// so a git checkout, a branch switch or an edit inside the project does not reset it. It is NOT tamper-proof: agents
+// run as the same OS user and can reach <home>/.fk. The guards stop drifting agents (gate.mjs hard-stops shell and
+// file-tool writes there); a determined one is stopped only by Claude Code's sandbox plus the deny rules fk init
+// writes (fk doctor: "guard strength"). FK_HOME moves <home>/.fk (tests).
 export const fkHome = () => process.env.FK_HOME || path.join(os.homedir(), '.fk');
+// Machine-wide kit caches (base tools, OMC latest, note throttles) also live under <home>/.fk/state.
+export const homeCache = (name) => path.join(fkHome(), 'state', name);
 const STATE_FILES = ['snapshots.json', 'compliance.jsonl'];
 const stateDirs = new Map();
 // One identity per project folder: real path (Windows 8.3 short names expanded), case-folded on Windows.
@@ -379,9 +387,9 @@ export function tokens(seg) {
 }
 export const shellTool = (t) => t === 'Bash' || t === 'PowerShell';
 
-// ---- OMC version policy: supported floor = (latest major - 1).0.0; latest cached 24 h in ~/.fk/omc-latest.json ----
+// ---- OMC version policy: supported floor = (latest major - 1).0.0; latest cached 24 h in ~/.fk/state/omc-latest.json ----
 const DAY = 24 * 60 * 60 * 1000;
-const omcCacheFile = () => path.join(fkHome(), 'omc-latest.json');
+const omcCacheFile = () => homeCache('omc-latest.json');
 export const readOmcCache = () => readJson(omcCacheFile(), {});
 export const writeOmcCache = (patch) => writeJson(omcCacheFile(), { ...readOmcCache(), ...patch });
 export const OMC_UPDATE = {
@@ -427,6 +435,21 @@ export async function fetchOmcLatest() {
     }
   }
   return readOmcCache().latest || null;
+}
+
+// Log lines a founder typed: written by the installed founder-kit plugin's dispatcher (runtime: plugin) from this kit's
+// folder, an installed founder-kit version (installed_plugins.json) or a sibling version folder. A line without
+// plugin_root does not count. There is no HMAC: its key would sit in <home>/.fk next to the log, readable by the same
+// agents it should keep out, so it would add nothing without the sandbox and nothing needed with it.
+const KIT_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const folded = (p) => { let r = path.resolve(p); try { r = fs.realpathSync.native(r); } catch { /* keep */ } return process.platform === 'win32' ? r.toLowerCase() : r; };
+let kitRoots;
+export const installedKitRoots = () => kitRoots ??= [KIT_DIR, ...Object.entries(readJson(path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'plugins', 'installed_plugins.json'), {}).plugins || {})
+  .filter(([k]) => k.startsWith('founder-kit@')).flatMap(([, v]) => [].concat(v)).map((e) => e?.installPath).filter(Boolean)].map(folded);
+export function fromKit(r) {
+  if (r?.runtime !== 'plugin' || !r.plugin_root) return false;
+  const p = folded(r.plugin_root);
+  return installedKitRoots().some((k) => p === k || path.dirname(p) === path.dirname(k));
 }
 
 // Installed OMC from the plugin registry (no process spawn): { mode: 'plugin', version } or null.

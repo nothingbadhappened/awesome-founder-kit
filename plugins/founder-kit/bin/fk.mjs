@@ -1,16 +1,17 @@
 #!/usr/bin/env node
-// fk: founder-kit project CLI. init | doctor [--hooks] | audit | config set | kickoff protect|release | uninstall
+// fk: founder-kit project CLI. init | doctor [--hooks] | audit | config set | kickoff protect|release | uninstall [--system]
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readJson, writeJson, takeSnapshot, refreshSnapshot, readSnapshot, listProtected, log, DEFAULT_CONFIG, RUNTIME,
-  stateDir, readLog, readOverrides, omcPlugin, omcStatus, fetchOmcLatest, cmpVer, OMC_UPDATE, hooksPathStatus, CHAIN_MARK } from '../hooks/lib.mjs';
+  stateDir, readLog, readOverrides, omcPlugin, omcStatus, fetchOmcLatest, cmpVer, OMC_UPDATE, hooksPathStatus, CHAIN_MARK, fromKit, fkHome, loadConfig } from '../hooks/lib.mjs';
+import { GATE_KEYS, softening, takeApproval, norm } from '../hooks/directives/gates.mjs';
+import { claudeAncestor } from './cmd/steward/proc.mjs';
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATE = path.join(KIT, 'templates', 'project');
-const KIT_REAL = (() => { try { return fs.realpathSync.native(KIT); } catch { return KIT; } })();
 
 const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', shell: process.platform === 'win32', ...opts });
 const say = (s = '') => process.stdout.write(s + '\n');
@@ -52,7 +53,7 @@ function hooksPath(root, chain) {
   say(`chained ${hp}/pre-commit -> .githooks/pre-commit`);
 }
 
-function init(chain = false) {
+async function init(chain = false) {
   const root = needRoot();
   const fk = path.join(root, '.fk');
   const seed = {
@@ -80,7 +81,14 @@ function init(chain = false) {
     else run('git', ['update-index', '--add', '--chmod=+x', `.githooks/${f}`], { cwd: root, shell: false }); // exec bit on Windows too
   }
   hooksPath(root, chain);
+  // Claude Code's own rules keep agents away from the kit folder in the home directory (fully only with its sandbox).
+  const { addGuardSettings } = await import('./cmd/setup/sandbox.mjs');
+  const g = addGuardSettings(root);
+  if (g === null) say('fk: .claude/settings.json is not valid JSON, so the deny rules for ~/.fk were not added. Fix it, then run fk init again.');
+  else say(`${g ? 'added  ' : 'kept   '} .claude/settings.json deny rules for ~/.fk (fk doctor shows the guard strength)`);
   takeSnapshot(root);
+  // The kit state records this project's folder (fk uninstall --system lists the projects still set up).
+  (await import('./cmd/update/migrations.mjs')).migrateDir(stateDir(root), root);
   say('fk: ready. Guards are active for this project. Set the pre-commit gates with: fk config set fast_gates "<command>"');
 }
 
@@ -126,6 +134,8 @@ async function doctor(withHooks) {
   const hasFk = !!(root && fs.existsSync(path.join(root, '.fk')));
   add('project .fk/', hasFk || 'yellow', hasFk ? root : `${root ? 'absent' : 'not in a git repo'} (expected before fk init)`);
   if (hasFk) add('kit state', true, `${stateDir(root)} (snapshots, overrides, log; outside the repo)`);
+  const gs = (await import('./cmd/setup/sandbox.mjs')).guardStrength(hasFk ? root : null);
+  add('guard strength', gs.level === 'green' || gs.level, gs.note);
   const hs = hasFk && hooksPathStatus(root);
   if (hs) add('pre-commit checks', hs.on || 'yellow', hs.on ? `on (core.hooksPath = ${hs.hp})`
     : hs.hp ? `off in this clone: git uses hooks from ${hs.hp}. Run fk init --chain to add the kit's pre-commit call there`
@@ -145,10 +155,8 @@ function print(rows) {
 }
 
 // Overrides and approvals the kit holds, each matched to the founder-typed line (UserPromptSubmit) that recorded it.
-// Only lines the installed plugin wrote count as typed: runtime: plugin, from this kit's plugin folder (any installed
-// version: same parent folder). A copied or command-started dispatcher has no marker, or another folder.
-const kitHome = (p) => { const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
-const fromKit = (r) => r.runtime === 'plugin' && (!r.plugin_root || kitHome(r.plugin_root) === kitHome(KIT_REAL) || kitHome(path.dirname(r.plugin_root)) === kitHome(path.dirname(KIT_REAL)));
+// Only lines the installed plugin wrote count as typed (fromKit, hooks/lib.mjs): runtime: plugin and a plugin_root that is
+// this kit or an installed founder-kit version. A copied or command-started dispatcher has no marker, or another folder.
 function untyped(root, rows) {
   rows = rows.filter(fromKit);
   const typed = (decision, prefix, session) => rows.some((r) => r.event === 'UserPromptSubmit' && r.decision === decision
@@ -184,7 +192,35 @@ async function auditTasks(root) {
   const main = ['main', 'master'].find((b) => run('git', ['rev-parse', '--verify', '-q', b], { cwd: root, shell: false }).status === 0);
   const subjects = main ? run('git', ['log', '-n', '1000', '--format=%s', main], { cwd: root, shell: false }).stdout : '';
   for (const [id] of tasks.filter(([, t]) => !t.done)) if (new RegExp(`\\b${id}\\b`).test(subjects)) lines.push(`${id} is in a commit on ${main} but was never closed with fk task done.`);
+  for (const c of (await import('./cmd/task.mjs')).changedAfterClose(root)) {
+    const files = `${c.files.slice(0, 5).join(', ')}${c.files.length > 5 ? ` and ${c.files.length - 5} more` : ''}`;
+    lines.push(c.main ? `${c.id} was closed ${c.done.slice(0, 10)}, but ${c.main} has ${files} different from what was reviewed (merged as something else, outside any task).`
+      : `${c.id} was closed ${c.done.slice(0, 10)}, but ${files} changed afterwards outside any task (no review saw it).`);
+  }
   say(`fk audit: ${tasks.length} tasks (${closed.length} closed).${lines.length ? '' : ' Every closed task passed fk task check.'}`);
+  for (const l of lines) say(`- ${l}`);
+}
+
+// Gate-command changes (fk config set check|fast_gates|runner), and a check or fast_gates that differs from the last
+// logged value: edited outside fk config set. Such an edit that is not a pure extension is flagged.
+const HOW = { 'first-set': 'first set', extension: 'only added steps', approved: 'founder-approved' };
+function auditGates(root, rows) {
+  const all = rows.filter((r) => r.decision === 'gate-change');
+  const lines = [];
+  for (const r of all.filter((x) => x.how !== 'unchanged')) {
+    const typed = r.how !== 'approved' || rows.some((t) => t.event === 'UserPromptSubmit' && t.decision === 'approve-gates' && fromKit(t)
+      && t.session === r.approval?.session && String(t.reason ?? '').startsWith(`${r.key}: ${norm(r.to)} (`));
+    lines.push(`${r.ts.slice(0, 16).replace('T', ' ')}  ${r.key}: "${r.from ?? ''}" -> "${r.to}" (${HOW[r.how] || r.how})${typed ? '' : ' NOT typed by you: review it'}`);
+  }
+  const cfg = readJson(path.join(root, '.fk', 'config.json'), {});
+  for (const key of ['check', 'fast_gates']) {
+    const last = all.filter((r) => r.key === key).at(-1);
+    if (!last || norm(last.to) === norm(cfg[key])) continue;
+    const why = cfg[key] ? softening(last.to, cfg[key]) : 'it was removed';
+    lines.push(`${key} was changed outside fk config set: "${last.to}" -> "${cfg[key] ?? ''}"${why ? `, NOT approved and not just added steps (${why}). Restore it (git checkout -- .fk/config.json)` : ' (only added steps)'}.`);
+  }
+  if (!lines.length) return;
+  say('fk audit: gate command changes:');
   for (const l of lines) say(`- ${l}`);
 }
 
@@ -193,6 +229,7 @@ async function audit() {
   const rows = readLog(root);
   const forged = untyped(root, rows);
   if (forged.length) say(`fk audit: NOT typed by you, review: ${forged.join('; ')}. Remove what you did not approve (git checkout -- .fk/<file>).`);
+  auditGates(root, rows);
   await auditTasks(root);
   const { drift } = await import('./cmd/index.mjs');
   const d = await drift(root);
@@ -226,7 +263,13 @@ function parseJsonc(text) {
   return JSON.parse(text.replace(/("(?:\\.|[^"\\])*")|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m, str) => str ?? '').replace(/,(\s*[}\]])/g, '$1'));
 }
 
-function kickoff(action, quiet = false) {
+// A founder-typed fk-override <guard> line, unexpired, recorded by the installed plugin (the CLI has no session id).
+function typedOverride(root, guard) {
+  const typed = readLog(root).filter((r) => r.event === 'UserPromptSubmit' && r.decision === 'override-set' && r.guard === guard && fromKit(r));
+  return readOverrides(root).find((o) => o.guard === guard && Date.parse(o.expires) > Date.now() && typed.some((r) => r.expires === o.expires)) || null;
+}
+
+function kickoff(action, quiet = false, uninstalling = false) {
   const root = needRoot();
   const out = quiet ? () => {} : say;
   if (!['protect', 'release'].includes(action)) { say('usage: fk kickoff protect | fk kickoff release'); process.exitCode = 1; return; }
@@ -234,6 +277,18 @@ function kickoff(action, quiet = false) {
   const file = path.join(root, '.claude', 'omc.jsonc');
   const stateFile = path.join(root, '.fk', 'kickoff.json');
   const existed = fs.existsSync(file);
+  // Releasing turns autopilot/ralph back on: only once the non-negotiables are written down and committed.
+  if (action === 'release' && !uninstalling) {
+    const c = loadConfig(root).paths.constraints;
+    const committed = run('git', ['cat-file', '-e', `HEAD:${c}`], { cwd: root, shell: false }).status === 0;
+    const o = !committed && typedOverride(root, 'kickoff');
+    if (!committed && !o) {
+      say(`fk: kickoff protection stays on: ${c} is ${fs.existsSync(path.join(root, c)) ? 'not committed yet' : 'missing'}. Finish the kickoff (the agreed non-negotiables in ${c}), commit it, then run this again.`);
+      say('To release it anyway, the founder types this line alone as a message: fk-override kickoff <reason>');
+      process.exitCode = 1; return;
+    }
+    if (o) log(root, { event: 'cli', guard: 'kickoff', decision: 'allow-override', reason: o.reason });
+  }
   if (action === 'release' && !existed) {
     fs.rmSync(stateFile, { force: true });
     refreshSnapshot(root, ['.fk/kickoff.json']);
@@ -273,9 +328,14 @@ async function config(sub, key, ...rest) {
     process.exitCode = 1; return;
   }
   if (key === 'reviewer_extra') {
-    const { implementerAgents, agentName } = await import('./cmd/task.mjs');
+    const { implementerAgents, agentName, pluginAgent } = await import('./cmd/task.mjs');
     if (!/^[\w.:-]+$/.test(value) || implementerAgents().includes(agentName(value))) {
       say(`fk: ${value} is not a reviewer agent name (agents that build, such as executor, cannot review).`);
+      process.exitCode = 1; return;
+    }
+    // Only an agent an installed plugin ships: a project agent (.claude/agents/) could be written by the implementer.
+    if (!pluginAgent(value)) {
+      say(`fk: no installed plugin has an agent named ${value}. A reviewer_extra must come from an installed plugin (its agents/ folder), not from this project.`);
       process.exitCode = 1; return;
     }
   }
@@ -286,12 +346,41 @@ async function config(sub, key, ...rest) {
       say(`fk: parent "${value}" is not an https/ssh/git URL or an existing folder outside this project.`);
       process.exitCode = 1; return;
     }
-    if (local) say(fs.existsSync(path.join(abs, 'docs', 'PROJECT.md')) ? 'fk: the parent bible (docs/PROJECT.md) joins the session read-first note.' : 'fk: the parent has no docs/PROJECT.md yet; the read-first note will name it once it exists.');
+    // A local parent is the top folder of a git repository with a committed docs/PROJECT.md; only its Mission line
+    // (shortened) joins the read-first note, never other text.
+    const top = local && run('git', ['rev-parse', '--show-toplevel'], { cwd: abs, shell: false });
+    const same = (a, b) => { try { return fs.realpathSync.native(a) === fs.realpathSync.native(b); } catch { return false; } };
+    if (local && (top.status !== 0 || !same(top.stdout.trim(), abs) || run('git', ['cat-file', '-e', 'HEAD:docs/PROJECT.md'], { cwd: abs, shell: false }).status !== 0)) {
+      say(`fk: parent "${value}" must be the top folder of a git repository whose docs/PROJECT.md is committed.`);
+      process.exitCode = 1; return;
+    }
+    if (local) say('fk: the parent bible\'s Mission line joins the session read-first note.');
   }
   const file = path.join(root, '.fk', 'config.json');
   if (!fs.existsSync(file)) { say('fk: run `fk init` first.'); process.exitCode = 1; return; }
   const before = new Set(Object.keys(readSnapshot(root).files));
   const cfg = readJson(file, {});
+  // Gate commands may only grow without the founder (the old command stays a whole && step); anything else needs a
+  // typed `fk-approve gates` line, used once. runner counts only while no check is set (the gate is then `<runner> check`).
+  let gate = null;
+  if (GATE_KEYS.includes(key) && !(key === 'runner' && cfg.check)) {
+    const prev = key === 'runner' && cfg.runner === DEFAULT_CONFIG.runner ? null : cfg[key];
+    const why = softening(prev, value);
+    gate = { from: cfg[key] ?? null, how: !norm(prev) ? 'first-set' : norm(prev) === norm(value) ? 'unchanged' : why ? 'approved' : 'extension' };
+    if (why) {
+      const typed = readLog(root).filter((r) => r.event === 'UserPromptSubmit' && r.decision === 'approve-gates' && fromKit(r));
+      const a = takeApproval(root, key, value, (x) => typed.some((r) => r.expires === x.expires && r.session === x.session));
+      if (!a) {
+        say(`fk: ${key} is already "${norm(prev)}". This change was not made: ${why}.`);
+        say(`A gate command may only grow (${norm(prev)} && <another check>). To change it anyway, the founder types this line alone as a message:`);
+        say(`fk-approve gates ${key} "${norm(value)}" <reason>`);
+        say('Then run this command again.');
+        log(root, { event: 'cli', guard: 'gate-guard', decision: 'gate-change-refused', key, from: gate.from, to: value });
+        process.exitCode = 1; return;
+      }
+      gate.approval = { ts: a.ts, reason: a.reason, session: a.session };
+    }
+  }
   if (key === 'protected_extra') cfg.protected_extra = [...new Set([...(cfg.protected_extra || []), value])];
   else if (key === 'reviewer_extra') cfg.reviewer_extra = [...new Set([...(cfg.reviewer_extra || []), value])];
   else if (key === 'risk_r3') cfg.risk = { ...(cfg.risk || {}), r3: [...new Set([...(cfg.risk?.r3 || []), value])] };
@@ -299,12 +388,24 @@ async function config(sub, key, ...rest) {
   writeJson(file, cfg);
   refreshSnapshot(root, ['.fk/config.json', ...listProtected(root).filter((r) => !before.has(r))]);
   log(root, { event: 'cli', guard: 'fk', decision: 'config-set', reason: `${key} = ${value}` });
-  say(`set     ${key} = ${value}`);
+  if (gate) log(root, { event: 'cli', guard: 'gate-guard', decision: 'gate-change', key, from: gate.from, to: value, how: gate.how, ...(gate.approval ? { approval: gate.approval } : {}) });
+  say(`set     ${key} = ${value}${gate?.approval ? ' (founder-approved)' : ''}`);
 }
 
-function uninstall() {
+// Only the founder takes the kit out, in a terminal: Claude Code sets CLAUDE_CODE_CHILD_SESSION=1 for the commands its
+// Bash/PowerShell tools run (code.claude.com/docs/en/env-vars; CLAUDECODE is also set in IDE terminals, so it is not
+// used), and gate-guard hard-stops the command text as well. The variable can be unset (env -u), so a Claude Code
+// process among fk's parents also counts; a process started so that its parent chain no longer reaches Claude Code is
+// not seen (only Claude Code's sandbox stops a determined agent, fk doctor).
+export const agentShell = () => process.env.CLAUDE_CODE_CHILD_SESSION === '1' || claudeAncestor();
+export const AGENT_REFUSED = 'only you can take the kit out. Run it yourself in a terminal outside Claude Code.';
+
+async function uninstall() {
+  if (agentShell()) { say(`fk uninstall${args.includes('--system') ? ' --system' : ''}: refused: ${AGENT_REFUSED}`); process.exitCode = 1; return; }
+  // --system: what the kit put on this computer (tools, plugins, settings, data), from the install ledger.
+  if (args.includes('--system')) { process.exitCode = await (await import('./cmd/setup/remove.mjs')).runSystemUninstall(args); return; }
   const root = needRoot();
-  kickoff('release', true);
+  kickoff('release', true, true);
   process.exitCode = 0;
   const hp = run('git', ['config', '--get', 'core.hooksPath'], { cwd: root, shell: false }).stdout.trim();
   if (hp === '.githooks') { run('git', ['config', '--unset', 'core.hooksPath'], { cwd: root, shell: false }); say('unset   git core.hooksPath'); }
@@ -336,6 +437,7 @@ function uninstall() {
     writeJson(sfile, s);
     say('cleaned .claude/settings.json (memory tool limits the kit added)');
   }
+  if ((await import('./cmd/setup/sandbox.mjs')).removeGuardSettings(root)) say('cleaned .claude/settings.json (the deny rules for ~/.fk the kit added)');
   fs.rmSync(stateDir(root), { recursive: true, force: true });
   fs.rmSync(path.join(root, '.fk'), { recursive: true, force: true });
   say('removed .fk/ and the kit state for this project');
@@ -358,5 +460,5 @@ if (commands[cmd]) commands[cmd]();
 else if (extra && fs.existsSync(extra)) import(pathToFileURL(extra).href).then((m) => m.default(args));
 else {
   const more = fs.readdirSync(CMD_DIR).filter((n) => n.endsWith('.mjs')).map((n) => `fk ${n.slice(0, -4)}`).sort();
-  say(`usage: fk init [--chain] | fk doctor [--hooks] | fk audit | fk config set <key> <value> | fk kickoff protect|release | fk uninstall\nmore:  ${more.join(' | ')}`);
+  say(`usage: fk init [--chain] | fk doctor [--hooks] | fk audit | fk config set <key> <value> | fk kickoff protect|release | fk uninstall [--system]\nmore:  ${more.join(' | ')}`);
 }

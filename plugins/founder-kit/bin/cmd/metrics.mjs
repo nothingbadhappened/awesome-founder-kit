@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { readJson, writeJson, readLog, fkHome, rootKey } from '../../hooks/lib.mjs';
+import { readJson, writeJson, readLog, homeCache, rootKey } from '../../hooks/lib.mjs';
 import { readTasks, readGateRuns } from '../../hooks/authorship.mjs';
 import { say, git, needRoot, parseArgs } from './adopt/util.mjs';
 import { readTask, reviews } from './task.mjs';
@@ -15,7 +15,7 @@ import { readTask, reviews } from './task.mjs';
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DAY = 24 * 60 * 60 * 1000;
 export const notesKey = (root) => rootKey(root);
-export const notesFile = () => path.join(fkHome(), 'metrics-notes.json');
+export const notesFile = () => homeCache('metrics-notes.json');
 
 // Claude Code keeps a project's transcripts in <config>/projects/<cwd with every non-alphanumeric character as "-">.
 export function transcriptsDir(root) {

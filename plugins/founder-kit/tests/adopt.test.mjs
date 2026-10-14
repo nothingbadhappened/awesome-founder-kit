@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { makeFixture, runHook } from '../hooks/selftest.mjs';
 import { readJson, writeJson, stateDir, refreshSnapshot } from '../hooks/lib.mjs';
 
+// fk uninstall refuses inside a Claude Code session (CLAUDE_CODE_CHILD_SESSION); these tests play the founder's terminal.
+delete process.env.CLAUDE_CODE_CHILD_SESSION;
 const ws = (dir, ...p) => path.join(stateDir(dir), 'adopt', ...p);
 
 const FK = path.join(import.meta.dirname, '..', 'bin', 'fk.mjs');
@@ -14,7 +16,8 @@ const dirs = [];
 const tmp = (p = 'fk-adopt-') => { const d = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), p))); dirs.push(d); return d; };
 test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 const homeEnv = (home) => ({ HOME: home, USERPROFILE: home });
-const fk = (cwd, args, env = {}) => spawnSync(process.execPath, [FK, ...args], { cwd, encoding: 'utf8', env: { ...process.env, FK_OMC_LATEST: 'none', ...env } });
+const { founderRun } = await import('./founder-shell.mjs'); // fk uninstall refuses below Claude Code: run it as the founder's terminal would
+const fk = (cwd, args, env = {}) => (args[0] === 'uninstall' ? founderRun : (c, a, o) => spawnSync(c, a, { ...o, encoding: 'utf8' }))(process.execPath, [FK, ...args], { cwd, env: { ...process.env, FK_OMC_LATEST: 'none', ...env } });
 const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
 const write = (dir, rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
 const commit = (dir, msg, files) => { for (const [f, t] of Object.entries(files)) write(dir, f, t); git(dir, 'add', '-A'); assert.equal(git(dir, 'commit', '-q', '-m', msg).status, 0, msg); };
@@ -198,7 +201,7 @@ test('session note: promotion candidates surface at most once a week', () => {
   write(dir, 'docs/process/lessons.md', '# Lessons\n\n## 2026-01-01 — Repeated thing  [seen: 3] [severity: low] [paths: **] [status: open]\n');
   assert.match(start(), note);
   assert.doesNotMatch(start(), note, 'throttled for a week');
-  const f = path.join(process.env.FK_HOME, 'learn-notes.json'); // FK_HOME (set by the selftest import) moves ~/.fk
+  const f = path.join(process.env.FK_HOME, 'state', 'learn-notes.json'); // FK_HOME (set by the selftest import) moves ~/.fk
   writeJson(f, Object.fromEntries(Object.keys(readJson(f)).map((k) => [k, Date.now() - 8 * 864e5])));
   assert.match(start(), note);
 });

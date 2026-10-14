@@ -61,7 +61,7 @@ function sandbox({ tools = {}, plugins = [], marketplaces = [], palace = false, 
     JSON.stringify(Object.fromEntries(marketplaces.map((repo) => [repo.split('/')[1], { source: { source: 'github', repo } }]))));
   if (palace) fs.mkdirSync(path.join(mp, 'palace'), { recursive: true });
   if (mpConfig) { fs.mkdirSync(mp, { recursive: true }); fs.writeFileSync(path.join(mp, 'config.json'), JSON.stringify(mpConfig)); }
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(path|mempal_dir|mempalace_config_dir|xdg_config_home|fk_home|gh_token|github_token|gh_config_dir)$/i.test(k)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(path|mempal_dir|mempalace_config_dir|xdg_config_home|fk_home|gh_token|github_token|gh_config_dir|claude_code_child_session)$/i.test(k)));
   Object.assign(env, { PATH: bin, HOME: home, USERPROFILE: home, FK_OMC_LATEST: '5.7.2', GH_CONFIG_DIR: path.join(home, '.config', 'gh') });
   return { root, home, bin, env, fk: path.join(home, '.fk'), cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
@@ -84,7 +84,7 @@ async function setup(sb, args, extra = {}) {
   const ran = [];
   try {
     const code = await runSetup(args, {
-      env: sb.env, out: (s = '') => lines.push(s), isTTY: false, has: () => false, userPath: (dir) => { sb.userPath = dir; return true; },
+      env: sb.env, out: (s = '') => lines.push(s), isTTY: false, has: () => false, underClaude: () => false /* plays the founder's terminal */, userPath: (dir) => { sb.userPath = dir; return true; },
       exec: (step) => { ran.push(step); return extra.exec ? extra.exec(step) : { ok: true }; },
       ...extra.deps,
     });
@@ -93,8 +93,10 @@ async function setup(sb, args, extra = {}) {
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   }
 }
-const readLedger = (sb) => { try { return fs.readFileSync(path.join(sb.fk, 'install-ledger.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
-const readStatus = (sb) => JSON.parse(fs.readFileSync(path.join(sb.fk, 'base-tools.json'), 'utf8'));
+// Base-tool steps the run took (pre-existing lines record what was already there; fk-shim lines the user-level fk command).
+const readLedger = (sb) => readAll(sb).filter((e) => e.kind !== 'pre-existing' && e.tool !== 'fk-shim');
+const readAll = (sb) => { try { return fs.readFileSync(path.join(sb.fk, 'install-ledger.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+const readStatus = (sb) => JSON.parse(fs.readFileSync(path.join(sb.fk, 'state', 'base-tools.json'), 'utf8'));
 
 test('compat.lock.json pins every base tool and is dated', () => {
   assert.equal(LOCK.checked, '2026-10-14');
@@ -141,6 +143,12 @@ test('everything present and configured: all ready, exit 0, status cached', asyn
     assert.equal(st.tools.skillspector.version, '2.12.0');
     assert.ok(Object.values(st.tools).every((t) => t.level === 'green'), JSON.stringify(st.tools));
     assert.equal(readLedger(sb).length, 0);
+    const pre = readAll(sb).filter((e) => e.tool !== 'fk-shim');
+    assert.ok(pre.length > 0 && pre.every((e) => e.kind === 'pre-existing' && e.undo === null), 'everything found is recorded as pre-existing');
+    for (const item of ['git', 'gitleaks', 'mempalace', 'mempalace:plugin', 'mempalace:marketplace', 'mempalace:palace', 'mempalace:silent-save',
+      'oh-my-claudecode:plugin', 'git-lfs:config', 'codebase-memory-mcp:auto_index', 'podman', 'podman:machine']) assert.ok(pre.some((e) => e.item === item), item);
+    await setup(sb, []);
+    assert.equal(readAll(sb).filter((e) => e.tool !== 'fk-shim').length, pre.length, 'recorded once');
   } finally { sb.cleanup(); }
 });
 
@@ -153,7 +161,7 @@ test('no consent without --yes when nobody can answer: nothing runs, status says
     assert.match(r.out, /Install gitleaks/);
     assert.match(r.out, /fk setup --yes/);
     assert.equal(readStatus(sb).tools.gitleaks.level, 'red');
-    assert.equal(readLedger(sb).length, 0);
+    assert.equal(readAll(sb).length, 0, 'no consent: nothing recorded');
   } finally { sb.cleanup(); }
 });
 
@@ -180,7 +188,10 @@ test('--yes installs, verifies, writes the ledger; a second run is a no-op', asy
       assert.equal(e.ok, true);
       assert.equal(e.via, 'fk setup');
       assert.ok(e.rollback && e.command && e.ts);
+      assert.equal(e.kind, 'installed');
+      assert.ok(e.item && e.how && e.undo && e.scope, JSON.stringify(e));
     }
+    assert.equal(ledger.find((e) => e.tool === 'skillspector').undo, 'uv tool uninstall skillspector');
     assert.equal(ledger.find((e) => e.tool === 'skillspector').version, LOCK.tools.skillspector.commit);
     assert.equal(ledger.find((e) => e.tool === 'gitleaks').version, LOCK.tools.gitleaks.version);
     assert.equal(readStatus(sb).tools.gitleaks.level, 'green');
@@ -250,6 +261,13 @@ test('C3: fk setup writes the user-level fk shim (resolved at run time); --remov
       assert.match(fs.readFileSync(path.join(sb.home, '.local', 'bin', 'fk.cmd'), 'utf8'), /@node "%USERPROFILE%\\\.fk\\fk-shim\.mjs" %\*/);
       assert.equal(sb.userPath, path.join(sb.home, '.local', 'bin'), 'user PATH gets ~/.local/bin');
     }
+    // The ledger: the shim files (home-relative, exact) and, on Windows, the PATH entry the kit added.
+    const shimRows = readAll(sb).filter((e) => e.tool === 'fk-shim');
+    const files = shimRows.find((e) => e.item === 'fk-shim');
+    assert.equal(files.kind, 'installed');
+    assert.ok(files.paths.includes('~/.local/bin/fk') && files.paths.includes('~/.fk/fk-shim.mjs'), JSON.stringify(files.paths));
+    if (WIN) assert.deepEqual([shimRows.find((e) => e.item === 'fk-shim:path').kind, shimRows.find((e) => e.item === 'fk-shim:path').dir], ['configured', '~/.local/bin']);
+    assert.ok(!JSON.stringify(shimRows).includes(sb.home), 'no home folder names in the ledger');
     // The shim finds the installed plugin from installed_plugins.json, whatever version folder it lives in.
     const reg = path.join(sb.home, '.claude', 'plugins', 'installed_plugins.json');
     const j = JSON.parse(fs.readFileSync(reg, 'utf8'));
@@ -270,6 +288,7 @@ test('C3: fk setup writes the user-level fk shim (resolved at run time); --remov
     assert.equal(fs.existsSync(path.join(sb.home, '.local', 'bin', 'fk')), false);
     assert.equal(fs.existsSync(path.join(sb.home, '.fk', 'fk-shim.mjs')), false);
     assert.equal(fs.existsSync(path.join(sb.home, '.local', 'bin', 'other')), true);
+    assert.equal(readAll(sb).filter((e) => e.item === 'fk-shim').at(-1).kind, 'removed');
     fs.writeFileSync(path.join(sb.home, '.local', 'bin', 'fk'), '#!/bin/sh\necho mine\n');
     assert.match((await setup(sb, ['--shim'])).out, /kept your own/);
     assert.equal(fs.readFileSync(path.join(sb.home, '.local', 'bin', 'fk'), 'utf8'), '#!/bin/sh\necho mine\n');
@@ -399,6 +418,9 @@ test('Podman present without a machine: only init + start planned; --yes logs th
     assert.deepEqual(ledger.map((e) => [e.tool, e.action, e.version]), [['podman', 'configure', T.podman.version], ['podman', 'configure', T.podman.version]]);
     assert.match(ledger[0].rollback, /ask the founder first/);
     assert.equal(ledger[1].rollback, 'podman machine stop');
+    assert.deepEqual([ledger[0].item, ledger[0].kind, ledger[0].undo], ['podman:machine', 'configured', 'podman machine rm -f podman-machine-default']);
+    assert.equal(ledger[1].kind, 'runtime', 'starting the machine is nothing to undo');
+    assert.ok(readAll(sb).some((e) => e.item === 'podman' && e.kind === 'pre-existing'), 'Podman itself was already there');
     assert.deepEqual(readStatus(sb).tools.podman.machine, { exists: true, running: true });
     const again = await setup(sb, ['--yes'], { deps: { os: 'mac' }, exec });
     assert.equal(again.ran.length, 0, 'idempotent');
@@ -430,8 +452,8 @@ test('fk doctor rows: tools, gh sign-in, container machine; refreshes the cached
   const sb = sandbox({ ...READY, answers: { podman: MACHINE_ON } });
   const { doctorRows } = await import('../bin/cmd/setup/core.mjs');
   try {
-    fs.mkdirSync(sb.fk, { recursive: true });
-    fs.writeFileSync(path.join(sb.fk, 'base-tools.json'), JSON.stringify({ tools: { podman: { level: 'green', machine: { exists: true, running: false } } } }));
+    fs.mkdirSync(path.join(sb.fk, 'state'), { recursive: true });
+    fs.writeFileSync(path.join(sb.fk, 'state', 'base-tools.json'), JSON.stringify({ tools: { podman: { level: 'green', machine: { exists: true, running: false } } } }));
     const rows = withHome(sb.home, () => doctorRows(sb.env, 'mac'));
     const row = (id) => rows.find((r) => r[1] === id);
     assert.equal(row('git-lfs')[0], true);
@@ -453,7 +475,7 @@ test('session note: no cache, red tools, all green; cache only and fast', () => 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-note-'));
   try {
     assert.equal(withHome(home, baseToolsNote), undefined, 'no cache yet: silent (fk-start runs fk setup)');
-    const write = (tools) => { fs.mkdirSync(path.join(home, '.fk'), { recursive: true }); fs.writeFileSync(path.join(home, '.fk', 'base-tools.json'), JSON.stringify({ tools })); };
+    const write = (tools) => { fs.mkdirSync(path.join(home, '.fk', 'state'), { recursive: true }); fs.writeFileSync(path.join(home, '.fk', 'state', 'base-tools.json'), JSON.stringify({ tools })); };
     write({ gitleaks: { level: 'red', reason: 'missing' }, uv: { level: 'red', reason: 'below-floor', min: '0.5.0' }, gh: { level: 'yellow' } });
     const t0 = performance.now();
     const note = withHome(home, baseToolsNote);
@@ -576,8 +598,8 @@ test('founder steps: blocking first (WSL2 before the gh sign-in); the session no
   } finally { sb.cleanup(); }
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-note-'));
   try {
-    fs.mkdirSync(path.join(home, '.fk'), { recursive: true });
-    fs.writeFileSync(path.join(home, '.fk', 'base-tools.json'), JSON.stringify({ tools: { podman: { level: 'yellow', founder: [{ id: 'wsl2', blocking: true, text: 'Turn on WSL2.' }] } } }));
+    fs.mkdirSync(path.join(home, '.fk', 'state'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.fk', 'state', 'base-tools.json'), JSON.stringify({ tools: { podman: { level: 'yellow', founder: [{ id: 'wsl2', blocking: true, text: 'Turn on WSL2.' }] } } }));
     const at = (now) => withHome(home, () => baseToolsNote({ now }));
     assert.match(at(Date.parse('2026-10-14T08:00:00Z')), /Turn on WSL2/);
     assert.equal(at(Date.parse('2026-10-14T18:00:00Z')), undefined, 'same day: quiet');

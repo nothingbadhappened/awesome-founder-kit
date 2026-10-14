@@ -3,6 +3,7 @@
 // Hot path: stat the sources, read one JSON file; a rebuild happens only when a source mtime moved. No git, no network.
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { loadConfig, readJson, writeJson, stateFile, globToRegex, quietPath } from './lib.mjs';
 
 export const BIBLE = 'docs/PROJECT.md';
@@ -233,11 +234,19 @@ export function openTask(root) {
   const text = read(path.join(root, TASKS, `${id}.md`)) || '';
   return { id, title: String(frontMatter(text).title || ''), context: contextIds(text) };
 }
+// The parent's Mission line, from its committed docs/PROJECT.md only (a git repo; a URL parent has none here): one line,
+// markdown and control characters stripped, at most 80 characters. Never any other text from the parent or the config.
 export function parentBible(root) {
   const p = loadConfig(root).parent;
   if (!p || /^[a-z][\w+.-]*:\/\//i.test(p) || /^git@/.test(p)) return null;
-  const abs = path.resolve(root, p, BIBLE);
-  return fs.existsSync(abs) ? path.relative(root, abs).split(path.sep).join('/') : null;
+  const r = spawnSync('git', ['show', `HEAD:${BIBLE}`], { cwd: path.resolve(root, p), encoding: 'utf8', timeout: 5000 });
+  if (r.status !== 0) return null;
+  const lines = r.stdout.split(/\r?\n/);
+  const at = lines.findIndex((l) => /^##\s+Mission\b/i.test(l));
+  const line = at < 0 ? null : lines.slice(at + 1).find((l) => l.trim() && !/^\s*<!--/.test(l) && !/^#/.test(l));
+  if (!line || /^##/.test(line)) return null;
+  const clean = line.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[`*_<>[\]{}|\\"]/g, '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean ? short(clean, 80) : null;
 }
 
 // SubagentStart: appended to the role pointer (bible + the open task's ADR/lesson ids).
@@ -260,7 +269,7 @@ export async function readFirst(root, session, now = Date.now()) {
   const parts = [];
   if (fs.existsSync(path.join(root, BIBLE))) parts.push(`${BIBLE} (bible)`);
   const pb = parentBible(root);
-  if (pb) parts.push(`${pb} (parent bible)`);
+  if (pb) parts.push(`parent mission: "${pb}"`);
   const t = openTask(root);
   if (t) parts.push(`open task ${t.id}${t.title ? ` ${short(t.title, 48)}` : ''}`);
   const k = (await loadIndex(root, ['knowledge'])).knowledge;

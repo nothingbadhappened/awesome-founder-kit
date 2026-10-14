@@ -194,6 +194,25 @@ export const CASES = [
   ['fake heredoc opener inside an outer heredoc hides cat .env', 'deny', () => bash(`cat <<X\ncat > a.md <<'EOF'\nX\ncat .env\nEOF`)],
   ['fake here-string opener inside a PowerShell string hides Remove-Item .fk', 'deny', () => ps(`Write-Output "\nSet-Content a.md -Value @'\n"; Remove-Item -Recurse -Force .fk\n'@\n'`)],
   ['quoted heredoc to a .md with another command on the line', 'deny', () => bash(`cat > docs/tasks/T-001.review-1.md <<'EOF' && cp x .fk/config.json\n${REVIEW}\nEOF`)],
+  // <home>/.fk as a whole (state, caches, quarantine), entered by cd chains or reached from inline interpreter code.
+  ['touch a kit cache in ~/.fk', 'deny', () => bash('touch ~/.fk/install-ledger.jsonl')],
+  ['cd ~/.fk then write a cache', 'deny', () => bash('cd ~/.fk && echo {} > base-tools.json')],
+  ['cd ~ then cd .fk then remove state', 'deny', () => bash('cd ~ && cd .fk && rm -rf state')],
+  ['Set-Location $env:USERPROFILE\\.fk', 'deny', () => ps('Set-Location $env:USERPROFILE\\.fk; Remove-Item state -Recurse')],
+  ['node -e removes .fk under the home folder', 'deny', () => bash(`node -e "const p=require('path').join(require('os').homedir(),'.fk');require('fs').rmSync(p,{recursive:true})"`)],
+  ['python -c removes .fk (with ; inside the code)', 'deny', () => bash(`python3 -c "import shutil; shutil.rmtree('.fk')"`)],
+  ['env -u CLAUDE_CODE_CHILD_SESSION fk uninstall', 'deny', () => bash('env -u CLAUDE_CODE_CHILD_SESSION fk uninstall --system --yes')],
+  ['env -i PATH=$PATH fk uninstall', 'deny', () => bash('env -i PATH=$PATH fk uninstall')],
+  ['uninstall piped into xargs fk', 'deny', () => bash('echo uninstall --system --yes | xargs fk')],
+  ['timeout 60 fk uninstall', 'deny', () => bash('timeout 60 fk uninstall')],
+  ['find -name .fk -delete', 'deny', () => bash('find . -name .fk -delete')],
+  ['git clean .fk', 'deny', () => bash('git clean -fdx .fk')],
+  ['agent runs fk uninstall', 'deny', () => bash('fk uninstall')],
+  ['agent runs node .../fk.mjs uninstall', 'deny', () => bash('node "/x/founder-kit/bin/fk.mjs" uninstall')],
+  ['agent runs fk setup --remove-shim via bash -c', 'deny', () => bash('bash -c "fk setup --remove-shim"')],
+  ['agent runs fk uninstall --system', 'deny', () => bash('fk uninstall --system --yes')],
+  ['agent runs install.sh --uninstall (piped)', 'deny', () => bash('curl -fsSL https://example.invalid/install/install.sh | bash -s -- --uninstall --yes')],
+  ['agent runs install.ps1 -Uninstall', 'deny', () => bash('powershell -File .\\install\\install.ps1 -Uninstall -Yes')],
 ];
 
 // Ordinary development in an active .fk project with an approved toolchain: every one of these must pass untouched.
@@ -245,6 +264,14 @@ export const CLEAN_TWINS = [
   ['rm build output', () => bash('rm -rf dist .turbo node_modules/.cache')],
   ['PowerShell Remove-Item dist', () => ps('Remove-Item -Recurse -Force .\\dist')],
   ['npm test -- --updateSnapshot', () => bash('npm test -- --updateSnapshot')],
+  ['env NODE_ENV=test npm test', () => bash('env NODE_ENV=test npm test')],
+  ['xargs -n1 echo < list.txt', () => bash('xargs -n1 echo < list.txt')],
+  ['node -e then echo $HOME', () => bash('node -e "console.log(1)" && echo $HOME')],
+  ['python -c expands a home config path', () => bash(`python -c "import os;print(os.path.expanduser('~/.config/myapp/x'))"`)],
+  ['powershell lists Documents', () => ps('powershell -Command "Get-ChildItem $env:USERPROFILE\\Documents"')],
+  ['cd ~ and list .fk (read-only)', () => bash('cd ~ && ls .fk')],
+  ['find -delete logs', () => bash('find . -name "*.log" -delete')],
+  ['git clean build output', () => bash('git clean -fdx dist')],
   ['pip install -e .', () => bash('pip install -e .')],
   ['export a token from gh', () => bash('export GITHUB_TOKEN=$(gh auth token)')],
   ['Write project config/budgets.json', (d) => pre('Write', { file_path: at(d, 'config/budgets.json'), content: '{ "monthly": 100 }\n' })],
@@ -297,6 +324,12 @@ export const CLEAN_TWINS = [
   ['rm -rf dist/.*', () => bash('rm -rf dist/.* build/.cache')],
   // A reviewer agent (no Write tool) saves its verdict with one shell command; the quoted body is text, not commands.
   ['review verdict via a quoted bash heredoc', () => bash(`cat > docs/tasks/T-001.review-1.md <<'EOF'\n${REVIEW}\nEOF`)],
+  ['commit message naming fk uninstall', () => bash('git commit -m "docs: how fk uninstall works"')],
+  ['commit message naming install.sh --uninstall', () => bash('git commit -m "docs: install.sh --uninstall and install.ps1 -Uninstall"')],
+  ['fk update --dry-run', () => bash('fk update --dry-run')],
+  ['fk task check', () => bash('fk task check T-001')],
+  ['cd into a project folder under home', () => bash('cd ~/projects/app && npm test')],
+  ['node -e prints a version', () => bash('node -e "console.log(process.version)"')],
   ['review verdict via a PowerShell here-string', () => ps(`Set-Content -Encoding utf8 -Path docs/tasks/T-001.review-1.md -Value @'\n${REVIEW}\n'@`)],
 ];
 

@@ -5,11 +5,78 @@
 # Saved as a file it also takes: -Yes (no question, for CI)  -DryRun (print the commands only). -WithGh is accepted and
 # changes nothing: the GitHub CLI is a base tool now. Piped through iex, use environment variables instead: $env:FK_YES='1'; $env:FK_DRY_RUN='1'.
 #
+# -Uninstall [-DryRun] [-Yes] [-Keep <ids>] [-Only <ids>] [-PluginOnly]: take back what Founder Kit installed
+# (fk uninstall --system; piped: $env:FK_UNINSTALL='1'). Only the founder runs it, in a terminal.
+#
 # Checks every base tool, prints one plan, asks once, installs what is missing (user scope where the tool allows),
 # configures, verifies, then adds the founder-kit plugin. Re-running is safe: present tools are left alone,
-# nothing is uninstalled or downgraded. Every change is logged to ~/.fk/install-ledger.jsonl with an undo hint.
+# nothing is uninstalled or downgraded. Every change is logged to ~/.fk/install-ledger.jsonl with its undo command, and
+# what was already here is logged as pre-existing (never removed by the kit).
 # Versions mirror plugins/founder-kit/compat.lock.json (a test fails when they drift).
-param([switch]$Yes, [switch]$DryRun, [switch]$WithGh)
+param([switch]$Yes, [switch]$DryRun, [switch]$WithGh, [switch]$Uninstall, [string]$Keep, [string]$Only, [switch]$PluginOnly)
+
+function ConvertTo-Tilde([string]$Path) {
+  $h = (@($env:USERPROFILE, $env:HOME, $HOME) | Where-Object { $_ } | Select-Object -First 1).TrimEnd('\', '/')
+  if ($Path -and $Path.Length -gt $h.Length -and $Path.Substring(0, $h.Length + 1).ToLower() -in @(($h + '\').ToLower(), ($h + '/').ToLower())) {
+    return '~/' + ($Path.Substring($h.Length + 1) -replace '\\', '/')
+  }
+  return $Path
+}
+
+# What one install step is, for the install ledger and `fk uninstall --system`: the rules of
+# plugins/founder-kit/bin/cmd/setup/ledger.mjs describe() (a test keeps them in step).
+function Get-LedgerMeta([string]$Tool, [string]$Action, [string]$Cmd, [string]$Rollback) {
+  $up = $Action -eq 'upgrade'
+  $m = [ordered]@{ item = $Tool; kind = $(if ($up) { 'upgraded' } elseif ($Action -eq 'configure') { 'configured' } else { 'installed' }); how = 'other'; scope = 'user'; undo = $null }
+  $set = { param($how, $scope, $undo) $m.kind = $(if ($up) { 'upgraded' } else { 'installed' }); $m.how = $how; $m.scope = $scope; $m.undo = $undo }
+  $script = { param([string[]]$paths) & $set 'script' 'user' "remove $($paths -join ' ')"; $m.paths = @($paths) }
+  if ($Cmd -match '^claude plugin marketplace add (\S+)') { $m.item = "${Tool}:marketplace"; & $set 'claude plugin' 'user' $(if ($Rollback -match '^claude plugin marketplace remove \S+$') { $Rollback } else { $null }); $m.kind = 'installed' }
+  elseif ($Cmd -match '^claude plugin install (\S+)') { $m.item = "${Tool}:plugin"; & $set 'claude plugin' 'user' "claude plugin uninstall $($Matches[1])"; $m.kind = 'installed' }
+  elseif ($Cmd -match '^claude plugin (marketplace )?update\b') { $m.item = "${Tool}:plugin"; $m.kind = 'upgraded'; $m.how = 'claude plugin' }
+  elseif ($Cmd -match '^npm i(nstall)? -g ') { $m.kind = 'upgraded'; $m.how = 'npm' }
+  elseif ($Cmd -match '^winget install --id (\S+)') { $id = $Matches[1]; & $set 'winget' $(if ($id -in 'jdx.mise', 'Casey.Just', 'Gitleaks.Gitleaks', 'Docker.DockerCompose') { 'user' } else { 'machine' }) "winget uninstall --id $id -e" }
+  elseif ($Cmd -match '^mise use -g ([\w-]+)@') { & $set 'mise' 'user' "mise unuse -g $($Matches[1])" }
+  elseif ($Cmd -match '^uv tool install\b') { & $set 'uv' 'user' $(if ($Rollback -match '^uv tool uninstall [\w-]+$') { $Rollback } else { "uv tool uninstall $Tool" }) }
+  elseif ($Cmd -match '^git lfs install\b') { $m.item = 'git-lfs:config'; $m.kind = 'configured'; $m.how = 'git config'; $m.undo = 'git lfs uninstall' }
+  elseif ($Cmd -match '^codebase-memory-mcp config set (\w+) (\S+)') { $m.item = "codebase-memory-mcp:$($Matches[1])"; $m.kind = 'configured'; $m.how = 'codebase-memory-mcp config'; $m.undo = $Rollback; $m.value = $Matches[2] }
+  elseif ($Cmd -match '^podman machine init\b') { $m.item = 'podman:machine'; $m.kind = 'configured'; $m.how = 'podman machine'; $m.undo = 'podman machine rm -f podman-machine-default'; $m.name = 'podman-machine-default' }
+  elseif ($Cmd -match '^podman machine start\b') { $m.item = 'podman:machine-start'; $m.kind = 'runtime'; $m.how = 'podman machine' }
+  elseif ($Cmd -match "mempalace init\b.*'([^']+)'") { $p = ConvertTo-Tilde $Matches[1]; $m.item = 'mempalace:palace'; $m.kind = 'data'; $m.how = 'mempalace init'; $m.undo = "delete the folder $p"; $m.paths = @($p) }
+  elseif ($Cmd -match '^set hooks\.silent_save = true in (.+)$') { $m.item = 'mempalace:silent-save'; $m.kind = 'configured'; $m.how = 'mempalace config'; $m.undo = 'remove "hooks.silent_save" from the MemPalace config.json'; $m.fn = 'silent-save'; $m.file = ConvertTo-Tilde $Matches[1] }
+  elseif ($Cmd -match 'astral\.sh/uv/') { & $script @('~/.local/bin/uv.exe', '~/.local/bin/uvx.exe') }
+  elseif ($Cmd -match 'claude\.ai/install\.') { & $script @('~/.local/bin/claude.exe') }
+  elseif ($Cmd -match 'codebase-memory-mcp/v[\d.]+/install\.') { & $set 'script' 'user' 'codebase-memory-mcp uninstall -y' }
+  elseif ($Rollback -and $Rollback -ne '-' -and -not $up) { $m.undo = $Rollback }
+  if ($m.kind -eq 'upgraded') { $m.undo = $null }
+  return $m
+}
+
+# Hands over to the kit's own uninstaller (fk uninstall --system); without Node.js or the plugin, lists the recorded
+# undo commands instead (newest line per item) and removes nothing.
+function Uninstall-FounderKit {
+  param([switch]$Yes, [switch]$DryRun, [string]$Keep, [string]$Only, [switch]$PluginOnly)
+  if ($env:CLAUDE_CODE_CHILD_SESSION -eq '1') { Write-Host 'Founder Kit uninstall: refused: only you can take the kit out. Run it yourself in a terminal outside Claude Code.' -ForegroundColor Red; return }
+  $a = @('uninstall', '--system')
+  if ($DryRun) { $a += '--dry-run' }; if ($Yes) { $a += '--yes' }; if ($PluginOnly) { $a += '--plugin-only' }
+  if ($Keep) { $a += @('--keep', $Keep) }; if ($Only) { $a += @('--only', $Only) }
+  $cli = $null
+  # The home folder as node and the kit see it (PowerShell's $HOME ignores an overridden USERPROFILE).
+  $userHome = @($env:USERPROFILE, $env:HOME, $HOME) | Where-Object { $_ } | Select-Object -First 1
+  try { $e = @((Get-Content -Raw -LiteralPath (Join-Path $userHome '.claude\plugins\installed_plugins.json') -ErrorAction Stop | ConvertFrom-Json).plugins.'founder-kit@awesome-founder-kit')[0]; if ($e.installPath) { $cli = Join-Path $e.installPath 'bin\fk.mjs' } } catch { }
+  if ($cli -and (Test-Path $cli) -and (Get-Command node -ErrorAction SilentlyContinue)) { & node $cli @a; return }
+  $ledger = Join-Path $(if ($env:FK_HOME) { $env:FK_HOME } else { Join-Path $userHome '.fk' }) 'install-ledger.jsonl'
+  if (-not (Test-Path $ledger)) { Write-Host 'Founder Kit uninstall: there is no install list (~/.fk/install-ledger.jsonl), so the kit installed nothing here that it knows of. Nothing was changed.'; return }
+  Write-Host "The kit's own uninstaller is not available (Node.js or the founder-kit plugin is missing), so nothing was removed."
+  Write-Host 'These are the undo commands recorded when the kit installed or changed things; run the ones you want yourself:'
+  $seen = @{}
+  $lines = @(Get-Content -LiteralPath $ledger | Where-Object { $_ }); [array]::Reverse($lines)
+  foreach ($l in $lines) {
+    try { $r = $l | ConvertFrom-Json } catch { continue }
+    if (-not $r.item -or $r.ok -eq $false -or $seen.ContainsKey($r.item)) { continue }
+    $seen[$r.item] = 1
+    if ($r.kind -in 'installed', 'configured', 'data' -and $r.undo) { Write-Host "  $($r.item): $($r.undo)" }
+  }
+}
 
 function Install-FounderKit {
   param([switch]$Yes, [switch]$DryRun, [switch]$WithGh)
@@ -43,7 +110,7 @@ function Install-FounderKit {
 
   $FkHome = if ($env:FK_HOME) { $env:FK_HOME } else { Join-Path $HOME '.fk' }
   $Ledger = Join-Path $FkHome 'install-ledger.jsonl'
-  $StatusFile = Join-Path $FkHome 'base-tools.json'
+  $StatusFile = Join-Path (Join-Path $FkHome 'state') 'base-tools.json'
   $PalaceHome = Join-Path $FkHome 'palace-home'
   $Winget = '-e --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity'
 
@@ -91,7 +158,7 @@ function Install-FounderKit {
   }
 
   function New-Row($id, $label, $size, $why) {
-    return [pscustomobject]@{ id = $id; label = $label; size = $size; why = $why; version = $null; level = 'green'; reason = 'ok'; note = ''; steps = @(); founder = @(); engine = $null; machine = $null }
+    return [pscustomobject]@{ id = $id; label = $label; size = $size; why = $why; version = $null; level = 'green'; reason = 'ok'; note = ''; steps = @(); founder = @(); engine = $null; machine = $null; found = @() }
   }
   function Set-Grade($row, $min, $installSteps) {
     if (-not $row.version) { $row.level = 'red'; $row.reason = 'missing'; $row.note = 'not installed'; $row.steps += $installSteps }
@@ -107,6 +174,7 @@ function Install-FounderKit {
     $r.version = Get-Ver 'git-lfs' @('version')
     Set-Grade $r $Min['git-lfs'] @(@{ action = 'install'; cmd = "winget install --id GitHub.GitLFS $Winget --version $GitLfsVersion"; rollback = 'winget uninstall --id GitHub.GitLFS' })
     $lfsOn = ''; if ($r.version -and (Get-Command git -ErrorAction SilentlyContinue)) { $lfsOn = (& git config --global --get filter.lfs.process 2>$null | Out-String).Trim() }
+    if ($lfsOn) { $r.found += 'git-lfs:config' }
     if (-not $lfsOn) {
       $r.steps += @{ action = 'configure'; cmd = 'git lfs install'; rollback = 'git lfs uninstall' }
       if ($r.version -and $r.level -ne 'red') { $r.level = 'red'; $r.reason = 'not-configured'; $r.note = 'not switched on for your user yet (git lfs install)' }
@@ -157,6 +225,7 @@ function Install-FounderKit {
       } else {
         $ml = ''; if ($podmanV) { $ml = (& podman machine list --format json 2>$null | Out-String) }
         $r.machine = [ordered]@{ exists = ($ml -match '"Name"'); running = ($ml -match '"Running":\s*true') }
+        if ($r.machine.exists) { $r.found += 'podman:machine' }
         if (-not $r.machine.exists) {
           $r.steps += @{ action = 'configure'; cmd = "podman machine init --cpus $($Machine.cpus) --memory $($Machine.memory)"; rollback = 'ask the founder first; then: podman machine rm podman-machine-default' }
           $r.steps += @{ action = 'configure'; cmd = 'podman machine start'; rollback = 'podman machine stop' }
@@ -185,7 +254,9 @@ function Install-FounderKit {
     $r.version = Get-Ver 'claude'; Set-Grade $r $Min['claude-code'] @(@{ action = 'install'; cmd = "& ([scriptblock]::Create((irm https://claude.ai/install.ps1))) $ClaudeVersion"; rollback = 'Remove-Item $HOME\.local\bin\claude.exe' }); $rows += $r
 
     $r = New-Row 'oh-my-claudecode' 'oh-my-claudecode' 'about 20 MB' 'the agent team and workflow the kit builds on'
+    if (Test-Marketplace $Omc.marketplace) { $r.found += 'oh-my-claudecode:marketplace' }
     if (Test-Plugin 'oh-my-claudecode') {
+      $r.found += 'oh-my-claudecode:plugin'
       $reg = Read-Json (Join-Path $HOME '.claude\plugins\installed_plugins.json')
       $e = @($reg.plugins.PSObject.Properties | Where-Object { $_.Name -like 'oh-my-claudecode@*' } | Select-Object -First 1).Value | Select-Object -First 1
       $r.version = $e.version
@@ -200,6 +271,7 @@ function Install-FounderKit {
     } else {
       # npm mode is supported; adding the plugin copy too would fire OMC's hooks twice, so it is never added here.
       $npm = Get-Ver 'omc'
+      if ($npm) { $r.found += 'oh-my-claudecode' }
       $r.version = $npm
       if ($npm -and (Test-AtLeast $npm "$([Math]::Max(0, [int]($OmcVersion -split '\.')[0] - 1)).0.0")) { $r.level = 'yellow'; $r.reason = 'npm'; $r.note = 'npm install: supported; plugin mode optional' }
       elseif ($npm) { $r.level = 'red'; $r.reason = 'below-floor'; $r.note = 'npm install below the supported floor'; $r.steps += @{ action = 'upgrade'; cmd = "npm i -g oh-my-claude-sisyphus@$OmcVersion"; rollback = 'npm i -g <the previous version>' } }
@@ -215,7 +287,7 @@ function Install-FounderKit {
     foreach ($key in 'auto_index', 'auto_watch') {
       $have = $null
       if ($r.version) { $have = (& codebase-memory-mcp config get $key 2>$null | Out-String).Trim() }
-      if ($r.version -and $have -eq 'false') { continue }
+      if ($r.version -and $have -eq 'false') { $r.found += "codebase-memory-mcp:$key"; continue }
       $r.steps += @{ action = 'configure'; cmd = "codebase-memory-mcp config set $key false"; rollback = "codebase-memory-mcp config set $key true" }
       $shown = if ($have) { $have } else { 'not set' }
       if ($r.version -and $r.level -ne 'red') { $r.level = 'red'; $r.reason = 'not-configured'; $r.note = "$key is $shown; the kit keeps it false so indexing runs only when asked" }
@@ -225,6 +297,8 @@ function Install-FounderKit {
     $r = New-Row 'mempalace' 'MemPalace' 'about 500 MB' 'remembers decisions between sessions, on your machine only'
     $r.version = Get-Ver 'mempalace'
     Set-Grade $r $Min['mempalace'] @(@{ action = 'install'; cmd = "uv tool install mempalace==$MempalaceVersion"; rollback = 'uv tool uninstall mempalace' })
+    if (Test-Plugin 'mempalace') { $r.found += 'mempalace:plugin' }
+    if (Test-Marketplace $Mp.marketplace) { $r.found += 'mempalace:marketplace' }
     $ps = Get-PluginSteps $Mp
     if ($ps.Count) { $r.steps += $ps; if ($r.level -ne 'red') { $r.level = 'red'; $r.reason = 'plugin-missing'; $r.note = 'the Claude Code plugin is not installed' } }
     $mdir = Get-MempalaceDir
@@ -232,6 +306,8 @@ function Install-FounderKit {
     $cfg = Read-Json $cfgFile
     $palace = if ($cfg -and $cfg.palace_path) { $cfg.palace_path } else { Join-Path $mdir 'palace' }
     $notes = @()
+    if (Test-Path $palace) { $r.found += 'mempalace:palace' }
+    if ($cfg -and $cfg.hooks -and $null -ne $cfg.hooks.silent_save) { $r.found += 'mempalace:silent-save' }
     if (-not (Test-Path $palace)) {
       $r.steps += @{ action = 'configure'; cmd = "New-Item -ItemType Directory -Force -Path '$PalaceHome' | Out-Null; if (`$?) { mempalace init --yes --no-llm --backend sqlite_exact '$PalaceHome' }"; rollback = 'delete the palace folder MemPalace reports in `mempalace status` and the "backend" line in its config.json' }
       if ($r.level -ne 'red') { $r.level = 'red'; $r.reason = 'not-configured'; $r.note = 'no palace yet' }
@@ -274,9 +350,26 @@ function Install-FounderKit {
   function Write-Ledger($tool, $step, $ok) {
     $v = @{ 'uv' = $UvVersion; 'claude-code' = $ClaudeVersion; 'codebase-memory-mcp' = $CbmVersion; 'mempalace' = $MempalaceVersion; 'skillspector' = $SkillspectorCommit; 'gitleaks' = $GitleaksVersion; 'oh-my-claudecode' = $OmcVersion
            'git-lfs' = $GitLfsVersion; 'mise' = $MiseVersion; 'just' = $JustVersion; 'podman' = $PodmanVersion; 'podman-compose' = $DockerComposeVersion }[$tool]
-    $line = [ordered]@{ ts = (Get-Date).ToUniversalTime().ToString('o'); via = 'install.ps1'; tool = $tool; action = $step.action; version = $v; command = $step.cmd; ok = $ok; rollback = $step.rollback } | ConvertTo-Json -Compress
+    $line = [ordered]@{ ts = (Get-Date).ToUniversalTime().ToString('o'); via = 'install.ps1'; tool = $tool; action = $step.action; version = $v; command = $step.cmd; ok = $ok; rollback = $step.rollback }
+    $meta = Get-LedgerMeta $tool $step.action $step.cmd $step.rollback
+    foreach ($k in $meta.Keys) { $line[$k] = $meta[$k] }
+    $line = $line | ConvertTo-Json -Compress
     New-Item -ItemType Directory -Force -Path $FkHome | Out-Null
     [IO.File]::AppendAllText($Ledger, $line + "`n")
+  }
+  # What was already here before this run: one pre-existing line per item the ledger does not know yet (never removed by the kit).
+  function Write-Found($rows) {
+    New-Item -ItemType Directory -Force -Path $FkHome | Out-Null
+    $known = ''; if (Test-Path $Ledger) { $known = [IO.File]::ReadAllText($Ledger) }
+    foreach ($r in $rows) {
+      $items = @($r.found)
+      if ($r.version -and $r.id -notin 'oh-my-claudecode', 'founder-kit') { $items += $(if ($r.id -eq 'podman' -and $r.engine) { $r.engine } else { $r.id }) }
+      foreach ($it in $items) {
+        if ($known.Contains('"item":"' + $it + '"')) { continue }
+        $line = [ordered]@{ ts = (Get-Date).ToUniversalTime().ToString('o'); via = 'install.ps1'; tool = ($it -split ':')[0]; item = $it; kind = 'pre-existing'; action = 'found'; version = $(if ($it -notmatch ':') { $r.version } else { $null }); undo = $null; ok = $true } | ConvertTo-Json -Compress
+        [IO.File]::AppendAllText($Ledger, $line + "`n"); $known += $line
+      }
+    }
   }
   # Steps only the founder can take (admin rights and a restart, a browser sign-in): listed, never run.
   function Show-Founder($rows) {
@@ -294,7 +387,7 @@ function Install-FounderKit {
       $tools[$r.id] = $t
     }
     $doc = [ordered]@{ ts = (Get-Date).ToUniversalTime().ToString('o'); checked_by = 'install.ps1'; lock_checked = $LockChecked; tools = $tools } | ConvertTo-Json -Depth 5
-    New-Item -ItemType Directory -Force -Path $FkHome | Out-Null
+    New-Item -ItemType Directory -Force -Path (Split-Path $StatusFile) | Out-Null
     [IO.File]::WriteAllText($StatusFile, $doc)
   }
 
@@ -307,7 +400,7 @@ function Install-FounderKit {
   $todo = @($rows | Where-Object { $_.steps.Count -gt 0 })
 
   if ($todo.Count -eq 0) {
-    if (-not $DryRun) { Write-Status $rows }
+    if (-not $DryRun) { Write-Status $rows; Write-Found $rows }
     Write-Host ''; Write-Host 'Everything is already in place.' -ForegroundColor Green
     Show-Founder $rows
   } else {
@@ -320,7 +413,7 @@ function Install-FounderKit {
       Write-Host "  $i. $verb $($r.label) ($($r.size)): $($r.why)."
       foreach ($s in $r.steps) { Write-Host "       > $($s.cmd)" -ForegroundColor DarkGray }
     }
-    Write-Host '  Nothing is uninstalled or downgraded. Every change is logged with an undo hint in ~/.fk/install-ledger.jsonl.'
+    Write-Host '  Nothing is uninstalled or downgraded. Every change is logged with its undo command in ~/.fk/install-ledger.jsonl (fk uninstall --system takes it back).'
     Write-Host '  Windows may ask for permission to install (a blue or yellow prompt). Say yes.'
     Show-Founder $rows
     if ($DryRun) { Write-Host ''; Write-Host 'Dry run: nothing was changed.'; return }
@@ -328,6 +421,7 @@ function Install-FounderKit {
     if (-not $go) { $a = Read-Host 'Install and set up these now? [Y/n]'; $go = -not ($a -match '^\s*n') }
     if (-not $go) { Write-Status $rows; Write-Host 'Nothing was installed. Run this again whenever you are ready.'; return }
 
+    Write-Found $rows
     foreach ($r in $todo) {
       Write-Host ''; Write-Host "-> $($r.label)" -ForegroundColor Cyan
       foreach ($s in $r.steps) {
@@ -367,4 +461,8 @@ function Install-FounderKit {
   }
 }
 
-Install-FounderKit -Yes:($Yes -or $env:FK_YES -eq '1') -DryRun:($DryRun -or $env:FK_DRY_RUN -eq '1') -WithGh:($WithGh -or $env:FK_WITH_GH -eq '1')
+if ($Uninstall -or $env:FK_UNINSTALL -eq '1') {
+  Uninstall-FounderKit -Yes:($Yes -or $env:FK_YES -eq '1') -DryRun:($DryRun -or $env:FK_DRY_RUN -eq '1') -Keep $Keep -Only $Only -PluginOnly:$PluginOnly
+} else {
+  Install-FounderKit -Yes:($Yes -or $env:FK_YES -eq '1') -DryRun:($DryRun -or $env:FK_DRY_RUN -eq '1') -WithGh:($WithGh -or $env:FK_WITH_GH -eq '1')
+}

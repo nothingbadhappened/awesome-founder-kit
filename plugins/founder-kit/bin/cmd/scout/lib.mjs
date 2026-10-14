@@ -5,7 +5,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { findRoot, readJson, writeJson, refreshSnapshot, hashFile, sanctionedJson, fkHome } from '../../../hooks/lib.mjs';
+import { findRoot, readJson, writeJson, refreshSnapshot, hashFile, sanctionedJson, fkHome, tokens } from '../../../hooks/lib.mjs';
+import { parse as installParse, specs as installSpecs } from '../../../hooks/guards/install.mjs';
 
 export const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 export const contract = () => readJson(path.join(KIT, 'policy', 'base-contract.json'), {});
@@ -47,15 +48,50 @@ export function forOs(cmd, platform = process.platform) {
 }
 
 // The specs install-guard understands (hooks/guards/install.mjs): name@version, mcp:<name>, plugin:<id>.
+const normSpec = (s) => String(s).toLowerCase().replace(/==/, '@');
 export function specsFor(e) {
-  if (Array.isArray(e.specs) && e.specs.length) return e.specs.map((s) => String(s).toLowerCase().replace(/==/, '@'));
+  if (Array.isArray(e.specs) && e.specs.length) return e.specs.map(normSpec);
   if (e.kind === 'mcp') return [`mcp:${e.name}`.toLowerCase()];
   if (e.kind === 'plugin') return [`plugin:${e.name}`.toLowerCase()];
   if (['cli', 'runtime', 'skill'].includes(e.kind) && e.version) return [`${e.package || e.name}@${String(e.version).replace(/^v/, '')}`.toLowerCase()];
   return [];
 }
+// Every OS's command of a per-OS field ({ win32, darwin, linux, all } or one string).
+export const allOs = (cmd) => (!cmd ? [] : typeof cmd === 'string' ? [cmd] : Object.values(cmd).filter((c) => typeof c === 'string'));
+// The specs an entry's own install commands name (what install-guard sees when they run), plus the default spec.
+// A proposal's explicit `specs` may only list these: the page shows them, and an extra name would approve more than it.
+export function derivedSpecs(e) {
+  const out = new Set(specsFor({ ...e, specs: undefined }));
+  for (const c of allOs(e.install)) {
+    const p = installParse(tokens(c));
+    if (p) for (const s of installSpecs(p)) out.add(normSpec(s));
+  }
+  return [...out];
+}
 
-export function validate(p, { existingMcp = [] } = {}) {
+// Commands the founder approves run exactly as shown, one program with its arguments: no chaining, pipes, substitution or
+// a download fed to a shell. A tool that needs more ships a script file in the project, reviewed and pinned by hash.
+const SHELLY = [[/;|&&|\|\||\||&|\n|\r/, 'chains, pipes or backgrounds commands (; && || | &)'], [/`|\$\(|<\(|>\(/, 'runs a substitution (` $( <( >()'],
+  [/[<>]/, 'redirects (< >)'], [/\b(?:curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod|iex|Invoke-Expression)\b/i, 'downloads or evaluates code on the spot']];
+export function commandProblem(cmd) {
+  const hit = SHELLY.find(([re]) => re.test(String(cmd)));
+  return hit ? hit[1] : null;
+}
+export const fileSha = (abs) => { try { return crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex'); } catch { return null; } };
+// e.script = { path: "<project-relative file>", sha256: "<hex>" }: the reviewed script an install, verify or uninstall
+// command runs. null when fine, else the problem.
+export function scriptProblem(root, e) {
+  if (!e.script) return null;
+  const rel = String(e.script.path || '');
+  const abs = root && path.resolve(root, rel);
+  if (!rel || !abs || path.relative(root, abs).startsWith('..') || path.isAbsolute(path.relative(root, abs))) return 'script.path must be a file inside the project';
+  if (!/^[0-9a-f]{64}$/i.test(String(e.script.sha256 || ''))) return 'script.sha256 must be the file\'s sha256 (64 hex characters)';
+  const h = fileSha(abs);
+  if (!h) return `script ${rel} not found`;
+  return h.toLowerCase() === String(e.script.sha256).toLowerCase() ? null : `script ${rel} does not match its sha256 (changed after review)`;
+}
+
+export function validate(p, { existingMcp = [], root = null } = {}) {
   const errors = [];
   const names = new Set();
   const budget = contract().budget || {};
@@ -66,6 +102,19 @@ export function validate(p, { existingMcp = [] } = {}) {
     names.add(e.name);
     if (!KINDS.includes(e.kind)) errors.push(`${who}: kind must be one of ${KINDS.join(', ')}`);
     if (!e.why) errors.push(`${who}: say why it is needed (one plain sentence)`);
+    for (const [field, label] of [['install', 'install'], ['verify', 'verify'], ['uninstall', 'uninstall']]) {
+      for (const c of allOs(e[field])) {
+        const why = commandProblem(c);
+        if (why) errors.push(`${who}: the ${label} command "${c}" ${why}; put those steps in a script file in the project and add "script": { "path": "<file>", "sha256": "<hash>" }, then run the script`);
+      }
+    }
+    const sp = scriptProblem(root, e);
+    if (sp) errors.push(`${who}: ${sp}`);
+    if (Array.isArray(e.specs) && e.specs.length) {
+      const derived = new Set(derivedSpecs(e));
+      const extra = e.specs.map(normSpec).filter((s) => !derived.has(s));
+      if (extra.length) errors.push(`${who}: specs ${extra.join(', ')} are not what its install commands install (${[...derived].join(', ') || 'none'}); list only those`);
+    }
     if (!INSTALLABLE.has(e.kind) || e.present) continue;
     if (!EXACT.test(String(e.version || ''))) errors.push(`${who}: pin an exact version (1.2.3), not "${e.version ?? ''}"`);
     const install = forOs(e.install);
@@ -88,6 +137,7 @@ export function validate(p, { existingMcp = [] } = {}) {
     }
     if (e.interference?.status === 'rejected') errors.push(`${who}: the interference check rejected it (${e.interference.why || 'see fk interference'})`);
   }
+  for (const v of p.environment?.verify || []) for (const c of allOs(v)) { const why = commandProblem(c); if (why) errors.push(`environment check "${c}" ${why}; use a plain command`); }
   const mcp = new Set([...existingMcp, ...(p.entries || []).filter((e) => e.kind === 'mcp').map((e) => e.name)]);
   const cap = budget.max_active_mcp_servers ?? 6;
   if (mcp.size > cap) errors.push(`${mcp.size} MCP servers in this project would exceed the cap of ${cap}; drop one or prefer a vendor CLI`);
@@ -119,7 +169,25 @@ function row(e) {
   if (e.kind === 'mcp' && e.token_cost) bits.push(`AI cost: ${e.token_cost}.`);
   if (e.score?.total != null && !e.present) bits.push(`Score ${e.score.total}${e.score.total < 75 ? ' (caution: ' + (e.caution || 'nothing better found') + ')' : ''}.`);
   if (e.score?.flags?.length) bits.push(e.score.flags.join('; ') + '.');
-  return `- ${bits.join(' ')}`;
+  return [`- ${bits.join(' ')}`, ...runs(e)].join('\n');
+}
+// Exactly what runs, per entry: the commands (each OS), the reviewed script and the specs the approval adds.
+function runs(e) {
+  if (e.present && !e.verify) return [];
+  const out = [];
+  const show = (label, cmd) => {
+    if (!cmd) return;
+    if (typeof cmd === 'string') out.push(`  - ${label}: \`${cmd}\``);
+    else for (const [os, c] of Object.entries(cmd)) out.push(`  - ${label} (${os}): \`${c}\``);
+  };
+  if (!e.present) show('Installs with', e.install);
+  if (e.kind === 'mcp' && e.mcp && !e.present) out.push(`  - MCP server command: \`${[e.mcp.command, ...(e.mcp.args || [])].join(' ')}\``);
+  show('Checks with', e.verify);
+  if (!e.present) show('Undo with', e.uninstall);
+  if (e.script) out.push(`  - Runs the script ${e.script.path} (sha256 ${e.script.sha256}); provision checks the hash before running it`);
+  const specs = e.present ? [] : specsFor(e);
+  if (specs.length) out.push(`  - Approving adds to the allowed tools: ${specs.map((s) => `\`${s}\``).join(', ')}`);
+  return out;
 }
 
 export function renderPage(p, hash) {

@@ -1,0 +1,114 @@
+name: smoke
+# Real-install smoke tests, free: no Claude login and no API key. Linux runs the one-line installer in a fresh
+# ubuntu:24.04 container as a normal sudo user; macOS runs it on the hosted runner (Podman skipped: no nested
+# virtualization there); Windows runs the installer and fk setup in dry-run mode. Then fk doctor --hooks, fk init in
+# a fresh repo, and planted PreToolUse events piped into hooks/dispatch.mjs (evals/smoke/).
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux:
+    name: install on fresh Ubuntu 24.04
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: What a fresh machine has before the one-line install (curl, sudo, a normal user)
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates sudo >/dev/null
+          useradd -m -s /bin/bash runner
+          echo 'runner ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runner
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install (FK_YES=1 bash install/install.sh)
+        run: |
+          cp -R "$GITHUB_WORKSPACE" /home/runner/src && chown -R runner:runner /home/runner/src
+          set +e
+          sudo -u runner -H env FK_YES=1 bash /home/runner/src/install/install.sh < /dev/null > /home/runner/install.log 2>&1
+          code=$?
+          echo "installer exit: $code" >> /home/runner/install.log
+          cat /home/runner/install.log
+          chown runner:runner /home/runner/install.log
+      - name: Smoke checks
+        run: sudo -u runner -H bash /home/runner/src/evals/smoke/check.sh /home/runner/install.log /home/runner/src
+      - name: Diagnostics
+        if: failure()
+        run: |
+          tail -n 100 /home/runner/install.log || true
+          cat /home/runner/.fk/install-ledger.jsonl 2>/dev/null | tail -n 40 || true
+          ls -la /home/runner/.local/bin 2>/dev/null || true
+
+  macos:
+    name: install on macOS
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # Hosted macOS runners cannot run the Podman machine (no nested virtualization). A `docker --version` stub makes
+      # the installer keep "Docker" and skip Podman and its machine, exactly as on a Mac that already has Docker.
+      - name: Skip the Podman machine (docker stub)
+        run: |
+          mkdir -p "$RUNNER_TEMP/stub"
+          printf '#!/bin/sh\n[ "$1" = --version ] && { echo "Docker version 27.0.0, build stub"; exit 0; }\nexit 1\n' > "$RUNNER_TEMP/stub/docker"
+          chmod +x "$RUNNER_TEMP/stub/docker"
+          echo "$RUNNER_TEMP/stub" >> "$GITHUB_PATH"
+      - name: Install (FK_YES=1 bash install/install.sh)
+        run: |
+          set +e
+          FK_YES=1 bash install/install.sh < /dev/null > "$RUNNER_TEMP/install.log" 2>&1
+          echo "installer exit: $?" >> "$RUNNER_TEMP/install.log"
+          cat "$RUNNER_TEMP/install.log"
+      - name: Smoke checks
+        run: bash evals/smoke/check.sh "$RUNNER_TEMP/install.log" "$GITHUB_WORKSPACE"
+      - name: Diagnostics
+        if: failure()
+        run: |
+          tail -n 100 "$RUNNER_TEMP/install.log" || true
+          tail -n 40 "$HOME/.fk/install-ledger.jsonl" 2>/dev/null || true
+
+  windows:
+    name: dry run on Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: install.ps1 -Yes -DryRun
+        shell: pwsh
+        run: |
+          $env:FK_HOME = Join-Path $env:RUNNER_TEMP 'fk-home'
+          $out = & powershell -NoProfile -ExecutionPolicy Bypass -File install/install.ps1 -Yes -DryRun 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Output $out
+          if ($code -ne 0) { Write-Output "installer dry run exited $code"; exit 1 }
+          if ($out -notmatch 'Dry run: nothing was changed|Everything is already in place') { Write-Output 'no dry-run summary line in the output'; exit 1 }
+          if ($out -match 'ParserError|CommandNotFoundException|RuntimeException|MethodInvocationException') { Write-Output 'the installer hit a PowerShell error'; exit 1 }
+      - name: fk setup --dry-run
+        shell: pwsh
+        run: |
+          $env:FK_HOME = Join-Path $env:RUNNER_TEMP 'fk-home'
+          $out = node plugins/founder-kit/bin/fk.mjs setup --dry-run 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Output $out
+          # 1 = some base tool is red (expected on a bare runner); anything else is a crash.
+          if ($code -gt 1) { Write-Output "fk setup --dry-run exited $code"; exit 1 }
+          if ($out -notmatch 'Dry run: nothing was changed|All base tools are ready|need attention') { Write-Output 'no plan or summary in the output'; exit 1 }
+          if ($out -match '\n\s+at .+:\d+:\d+|TypeError|ReferenceError|SyntaxError') { Write-Output 'fk setup crashed'; exit 1 }
+      - name: Guards (planted PreToolUse events, checked-out kit)
+        run: node evals/smoke/guards.mjs plugins/founder-kit

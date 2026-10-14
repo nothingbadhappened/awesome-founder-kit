@@ -131,18 +131,20 @@ test('ledger add + sweep: dry run touches nothing; sweep stops only our entries 
   } finally { child.kill(); other.kill(); cleanup(p.dir); }
 });
 
+const dirsToClean = [];
 test('sweep never touches another checkout\'s entries or pre-existing items', () => {
   const p = project();
   const proc = sleeper();
   const theirTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-their-'));
   const preTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-pre-'));
-  const ourTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-our-'));
   try {
     fs.appendFileSync(path.join(p.dir, '.fk', 'ledger.jsonl'),
       JSON.stringify({ ts: new Date().toISOString(), fp: OTHER_FP, kind: 'tmpdir', id: theirTmp }) + '\n'
       + JSON.stringify({ ts: new Date().toISOString(), fp: OTHER_FP, kind: 'dev-server', id: 'x', pid: proc.pid, cmd: 'node' }) + '\n');
     assert.equal(p.fk(['ledger', 'add', 'tmpdir', preTmp, '--pre-existing']).status, 0);
-    assert.equal(p.fk(['ledger', 'add', 'tmpdir', ourTmp]).status, 0);
+    const ourTmp = p.fk(['ledger', 'mktemp']).stdout.trim();
+    assert.ok(fs.existsSync(ourTmp), ourTmp);
+    dirsToClean.push(ourTmp);
     const r = p.fk(['sweep']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.ok(!fs.existsSync(ourTmp), 'our temp folder removed');
@@ -151,14 +153,14 @@ test('sweep never touches another checkout\'s entries or pre-existing items', ()
     assert.ok(isAlive(proc.pid), 'other checkout\'s process untouched');
     const fps = ledgerRows(p.dir).map((e) => e.fp);
     assert.equal(fps.filter((f) => f === OTHER_FP).length, 2, 'other entries stay in the ledger');
-  } finally { proc.kill(); for (const d of [p.dir, theirTmp, preTmp, ourTmp]) cleanup(d); }
+  } finally { proc.kill(); for (const d of [p.dir, theirTmp, preTmp, ...dirsToClean.splice(0)]) cleanup(d); }
 });
 
 test('sweep keeps entries within their TTL and reminds nothing until expired', () => {
   const p = project();
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-ttl-'));
+  const tmp = p.fk(['ledger', 'mktemp', '--ttl', '2h']).stdout.trim();
   try {
-    assert.equal(p.fk(['ledger', 'add', 'tmpdir', tmp, '--ttl', '2h']).status, 0);
+    assert.ok(fs.existsSync(tmp), tmp);
     const r = p.fk(['sweep']);
     assert.match(r.stdout, /still within its time limit/);
     assert.ok(fs.existsSync(tmp));
@@ -268,7 +270,7 @@ test('sweep uses Podman when Docker is absent: same labels, same rules', () => {
 
 test('weekly note mentions a running Podman machine from the cache only', async () => {
   const p = project();
-  const status = path.join(process.env.FK_HOME, 'base-tools.json');
+  const status = path.join(process.env.FK_HOME, 'state', 'base-tools.json');
   try {
     const { default: steward } = await import(pathToFileURL(path.join(KIT, 'hooks', 'session', '20-steward.mjs')).href);
     const t0 = Date.now(), D = 24 * 3600e3;

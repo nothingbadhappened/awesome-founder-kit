@@ -5,24 +5,32 @@
 #
 # Options (after `bash -s --` when piped): --yes (no question, for CI)  --dry-run (print the commands only)
 # (--with-gh is accepted and changes nothing: the GitHub CLI is a base tool now.)
+#   --uninstall [--keep <ids>] [--only <ids>] [--plugin-only]: take back what Founder Kit installed (fk uninstall --system;
+#   piped: FK_UNINSTALL=1). Only the founder runs it, in a terminal.
 #
 # Checks every base tool, prints one plan, asks once, installs what is missing (into your home folder where the
 # tool allows), configures, verifies, then adds the founder-kit plugin. Re-running is safe: present tools are left
-# alone, nothing is uninstalled or downgraded. Every change is logged to ~/.fk/install-ledger.jsonl with an undo hint.
+# alone, nothing is uninstalled or downgraded. Every change is logged to ~/.fk/install-ledger.jsonl with its undo
+# command, and what was already here is logged as pre-existing (never removed by the kit).
 # Versions mirror plugins/founder-kit/compat.lock.json (a test fails when they drift).
 set -u
 
-YES=0; DRY=0
-for a in "$@"; do
-  case "$a" in
+YES=0; DRY=0; UNINSTALL=0; UN_ARGS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --yes|-y) YES=1 ;;
     --dry-run) DRY=1 ;;
     --with-gh) ;;
-    *) echo "usage: install.sh [--yes] [--dry-run]"; exit 2 ;;
+    --uninstall) UNINSTALL=1 ;;
+    --plugin-only) UN_ARGS="$UN_ARGS --plugin-only" ;;
+    --keep|--only) [ $# -ge 2 ] || { echo "usage: install.sh $1 <ids>"; exit 2; }; UN_ARGS="$UN_ARGS $1 $2"; shift ;;
+    *) echo "usage: install.sh [--yes] [--dry-run] | install.sh --uninstall [--dry-run] [--yes] [--keep <ids>] [--only <ids>] [--plugin-only]"; exit 2 ;;
   esac
+  shift
 done
 [ "${FK_YES:-}" = 1 ] && YES=1
 [ "${FK_DRY_RUN:-}" = 1 ] && DRY=1
+[ "${FK_UNINSTALL:-}" = 1 ] && UNINSTALL=1
 
 # ---- pins (compat.lock.json, checked 2026-10-14) ----
 LOCK_CHECKED=2026-10-14
@@ -67,7 +75,7 @@ ARCH='OS=$(uname -s | tr A-Z a-z); A=$(uname -m); case "$A" in x86_64|amd64) A=x
 
 FK_HOME="${FK_HOME:-$HOME/.fk}"
 LEDGER="$FK_HOME/install-ledger.jsonl"
-STATUS_FILE="$FK_HOME/base-tools.json"
+STATUS_FILE="$FK_HOME/state/base-tools.json"
 PALACE_HOME="$FK_HOME/palace-home"
 PLUGINS="$HOME/.claude/plugins"
 case "$(uname -s)" in Darwin) OSN=mac ;; *) OSN=linux ;; esac
@@ -91,12 +99,78 @@ at_least() { # at_least <have> <min>
 plugin_installed() { grep -q "\"$1@" "$PLUGINS/installed_plugins.json" 2>/dev/null; }
 marketplace_added() { grep -qi "\"repo\": *\"$1\"" "$PLUGINS/known_marketplaces.json" 2>/dev/null; }
 json_esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+tilde() { case "$1" in "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;; *) printf '%s' "$1" ;; esac; }
+
+# What one install step is, for the install ledger and `fk uninstall --system`: the rules of
+# plugins/founder-kit/bin/cmd/setup/ledger.mjs describe() (a test keeps them in step). Prints JSON members.
+ledger_meta() { # ledger_meta <tool> <action> <cmd> <rollback>
+  local t="$1" a="$2" c="$3" rb="$4" item="$1" kind=installed how=other scope=user undo="" paths="" extra="" m
+  [ "$a" = upgrade ] && kind=upgraded
+  case "$c" in
+    "claude plugin marketplace add "*) item="$t:marketplace"; kind=installed; how="claude plugin"; case "$rb" in "claude plugin marketplace remove "*) undo="$rb" ;; esac ;;
+    "claude plugin install "*) item="$t:plugin"; kind=installed; how="claude plugin"; undo="claude plugin uninstall ${c#claude plugin install }" ;;
+    "claude plugin update "*|"claude plugin marketplace update "*) item="$t:plugin"; kind=upgraded; how="claude plugin" ;;
+    "npm i -g "*) kind=upgraded; how=npm ;;
+    "brew install "*) how=brew; scope=machine; undo="brew uninstall ${c#brew install }" ;;
+    *"apt-get install -y "*) how=apt; scope=machine; undo="sudo apt-get remove -y ${c##*install -y }" ;;
+    *"dnf install -y "*) how=dnf; scope=machine; undo="sudo dnf remove -y ${c##*install -y }" ;;
+    *"pacman -S --noconfirm "*) how=pacman; scope=machine; undo="sudo pacman -R --noconfirm ${c##*--noconfirm }" ;;
+    "mise use -g "*) how=mise; m=${c#mise use -g }; undo="mise unuse -g ${m%%@*}" ;;
+    "uv tool install "*) how=uv; case "$rb" in "uv tool uninstall "*) undo="$rb" ;; *) undo="uv tool uninstall $t" ;; esac ;;
+    "xcode-select --install"*) how=xcode-select; scope=machine ;;
+    "git lfs install"*) item=git-lfs:config; kind=configured; how="git config"; undo="git lfs uninstall" ;;
+    "codebase-memory-mcp config set "*) m=${c#codebase-memory-mcp config set }; item="codebase-memory-mcp:${m%% *}"; kind=configured; how="codebase-memory-mcp config"; undo="$rb"; extra=",\"value\":\"${m#* }\"" ;;
+    "podman machine init"*) item=podman:machine; kind=configured; how="podman machine"; undo="podman machine rm -f podman-machine-default"; extra=',"name":"podman-machine-default"' ;;
+    "podman machine start"*) item=podman:machine-start; kind=runtime; how="podman machine" ;;
+    *"mempalace init "*) item=mempalace:palace; kind=data; how="mempalace init"; m=${c##* \'}; m=$(tilde "${m%\'}"); undo="delete the folder $m"; paths="\"$m\"" ;;
+    "node -e "*silent_save*) item=mempalace:silent-save; kind=configured; how="mempalace config"; undo='remove "hooks.silent_save" from the MemPalace config.json'
+      m=${c##*\' \'}; extra=",\"fn\":\"silent-save\",\"file\":\"$(json_esc "$(tilde "${m%\'}")")\"" ;;
+    *astral.sh/uv/*) how=script; paths='"~/.local/bin/uv","~/.local/bin/uvx"'; undo="remove ~/.local/bin/uv ~/.local/bin/uvx" ;;
+    *claude.ai/install.*) how=script; paths='"~/.local/bin/claude"'; undo="remove ~/.local/bin/claude" ;;
+    *mise.run*) how=script; paths='"~/.local/bin/mise"'; undo="remove ~/.local/bin/mise" ;;
+    *nodejs.org/dist*) how=script; paths="\"~/.local/share/fk/node-v$NODE_VERSION\",\"~/.local/bin/node\",\"~/.local/bin/npm\",\"~/.local/bin/npx\""
+      undo="remove ~/.local/share/fk/node-v$NODE_VERSION ~/.local/bin/node ~/.local/bin/npm ~/.local/bin/npx" ;;
+    *gitleaks/releases/download*) how=script; paths='"~/.local/bin/gitleaks"'; undo="remove ~/.local/bin/gitleaks" ;;
+    *codebase-memory-mcp/v*/install.*) how=script; undo="codebase-memory-mcp uninstall -y" ;;
+    "echo "*) kind=runtime; how=manual ;;
+    *) [ "$a" = configure ] && kind=configured; [ "$rb" != - ] && undo="$rb" ;;
+  esac
+  [ "$kind" = upgraded ] && undo=""
+  [ -n "$paths" ] && extra="$extra,\"paths\":[$paths]"
+  if [ -n "$undo" ]; then undo="\"$(json_esc "$undo")\""; else undo=null; fi
+  printf '"item":"%s","kind":"%s","how":"%s","scope":"%s","undo":%s%s' "$item" "$kind" "$how" "$scope" "$undo" "$extra"
+}
+
+# Hands over to the kit's own uninstaller (fk uninstall --system); without Node.js or the plugin, lists the recorded
+# undo commands instead (newest line per item) and removes nothing.
+uninstall_kit() {
+  if [ "${CLAUDE_CODE_CHILD_SESSION:-}" = 1 ]; then
+    echo "Founder Kit uninstall: refused: only you can take the kit out. Run it yourself in a terminal outside Claude Code."; exit 1
+  fi
+  local fk_path="" a="--system"
+  [ "$DRY" = 1 ] && a="$a --dry-run"; [ "$YES" = 1 ] && a="$a --yes"
+  has node && fk_path=$(node -e "const j=require(process.argv[1]);const e=[].concat(j.plugins['founder-kit@awesome-founder-kit']||[])[0]||{};console.log(e.installPath||'')" "$PLUGINS/installed_plugins.json" 2>/dev/null)
+  if [ -n "$fk_path" ] && [ -f "$fk_path/bin/fk.mjs" ]; then
+    # shellcheck disable=SC2086
+    if [ "$YES" != 1 ] && [ "$DRY" != 1 ] && [ -r /dev/tty ]; then node "$fk_path/bin/fk.mjs" uninstall $a $UN_ARGS < /dev/tty; else node "$fk_path/bin/fk.mjs" uninstall $a $UN_ARGS; fi
+    exit $?
+  fi
+  [ -f "$LEDGER" ] || { echo "Founder Kit uninstall: there is no install list ($LEDGER), so the kit installed nothing here that it knows of. Nothing was changed."; exit 0; }
+  echo "The kit's own uninstaller is not available (Node.js or the founder-kit plugin is missing), so nothing was removed."
+  echo "These are the undo commands recorded when the kit installed or changed things; run the ones you want yourself:"
+  awk 'function f(l, k,  m) { if (match(l, "\"" k "\":\"[^\"]*\"")) { m = substr(l, RSTART, RLENGTH); sub("^\"" k "\":\"", "", m); sub("\"$", "", m); return m } return "" }
+    { a[NR] = $0 } END { for (i = NR; i > 0; i--) { l = a[i]; if (l ~ /"ok":false/) continue; it = f(l, "item"); if (it == "" || seen[it]++) continue
+      k = f(l, "kind"); u = f(l, "undo"); if ((k == "installed" || k == "configured" || k == "data") && u != "") print "  " it ": " u } }' "$LEDGER"
+  exit 0
+}
 
 # Plan rows: parallel arrays. Steps: "id<TAB>action<TAB>cmd<TAB>rollback" lines.
 # FOUNDERS: a JSON object per row for a step only the founder can take (empty when none).
-IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); FOUNDERS=(); STEPS=""
+IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); FOUNDERS=(); FOUNDS=(); STEPS=""
 PODMAN_ENGINE=""; PODMAN_MACHINE=null
-row() { IDS+=("$1"); LABELS+=("$2"); SIZES+=("$3"); WHYS+=("$4"); VERSIONS+=("$5"); LEVELS+=(green); REASONS+=(ok); NOTES+=(""); FOUNDERS+=(""); }
+row() { IDS+=("$1"); LABELS+=("$2"); SIZES+=("$3"); WHYS+=("$4"); VERSIONS+=("$5"); LEVELS+=(green); REASONS+=(ok); NOTES+=(""); FOUNDERS+=(""); FOUNDS+=(""); }
+# found <item>: already here before this run (the ledger records it once as pre-existing; never removed by the kit).
+found() { local i; i=$(last); FOUNDS[$i]="${FOUNDS[$i]} $1"; }
 last() { echo $(( ${#IDS[@]} - 1 )); }
 set_red() { local i; i=$(last); LEVELS[$i]=red; REASONS[$i]="$1"; NOTES[$i]="$2"; }
 step() { STEPS="$STEPS$1	$2	$3	$4
@@ -127,7 +201,7 @@ mempalace_dir() {
 }
 
 state() {
-  IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); FOUNDERS=(); STEPS=""
+  IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); FOUNDERS=(); FOUNDS=(); STEPS=""
   PODMAN_ENGINE=""; PODMAN_MACHINE=null
   local i cmd
 
@@ -144,6 +218,7 @@ state() {
   if [ -z "${VERSIONS[$i]}" ] || [ -z "$(git config --global --get filter.lfs.process 2>/dev/null)" ]; then
     step git-lfs configure "git lfs install" "git lfs uninstall"
     if [ -n "${VERSIONS[$i]}" ] && [ "${LEVELS[$i]}" != red ]; then set_red not-configured "not switched on for your user yet (git lfs install)"; fi
+  else found git-lfs:config
   fi
 
   row node Node.js "about 100 MB" "runs the kit's safety checks" "$(ver node --version)"
@@ -202,6 +277,7 @@ state() {
       printf '%s' "$ml" | grep -q '"Name"' && exists=true
       printf '%s' "$ml" | grep -Eq '"Running": *true' && running=true
       PODMAN_MACHINE="{\"exists\":$exists,\"running\":$running}"
+      [ "$exists" = true ] && found podman:machine
       if [ "$exists" = false ]; then
         step podman configure "podman machine init --cpus $MACHINE_CPUS --memory $MACHINE_MEMORY" "ask the founder first; then: podman machine rm podman-machine-default"
         step podman configure "podman machine start" "podman machine stop"
@@ -224,7 +300,9 @@ state() {
 
   row oh-my-claudecode oh-my-claudecode "about 20 MB" "the agent team and workflow the kit builds on" ""
   i=$(last)
+  marketplace_added "$OMC_MARKETPLACE" && found oh-my-claudecode:marketplace
   if plugin_installed oh-my-claudecode; then
+    found oh-my-claudecode:plugin
     VERSIONS[$i]=$( (has node && node -e "const j=require(process.argv[1]);const k=Object.keys(j.plugins).find(k=>k.startsWith('oh-my-claudecode@'));const e=[].concat(j.plugins[k])[0]||{};let v=e.version;try{v=require(require('path').join(e.installPath,'.claude-plugin','plugin.json')).version||v}catch{}console.log(v||'')" "$PLUGINS/installed_plugins.json") 2>/dev/null)
     local latest floor
     latest=${FK_OMC_LATEST:-}
@@ -239,6 +317,7 @@ state() {
   else
     # npm mode is supported; adding the plugin copy too would fire OMC's hooks twice, so it is never added here.
     VERSIONS[$i]=$(ver omc --version)
+    [ -n "${VERSIONS[$i]}" ] && found oh-my-claudecode
     if [ -z "${VERSIONS[$i]}" ]; then set_red missing "not installed"; plugin_steps oh-my-claudecode "$OMC_MARKETPLACE" "$OMC_PLUGIN" omc
     elif at_least "${VERSIONS[$i]}" "$(( ${OMC_VERSION%%.*} - 1 )).0.0"; then LEVELS[$i]=yellow; REASONS[$i]=npm; NOTES[$i]="npm install: supported; plugin mode optional"
     else set_red below-floor "npm install below the supported floor"; step oh-my-claudecode upgrade "npm i -g oh-my-claude-sisyphus@$OMC_VERSION" "npm i -g <the previous version>"; fi
@@ -250,7 +329,7 @@ state() {
   for key in auto_index auto_watch; do
     local have=""
     [ -n "${VERSIONS[$i]}" ] && have=$(codebase-memory-mcp config get "$key" 2>/dev/null | tr -d '[:space:]')
-    [ -n "${VERSIONS[$i]}" ] && [ "$have" = false ] && continue
+    [ -n "${VERSIONS[$i]}" ] && [ "$have" = false ] && { found "codebase-memory-mcp:$key"; continue; }
     step codebase-memory-mcp configure "codebase-memory-mcp config set $key false" "codebase-memory-mcp config set $key true"
     if [ -n "${VERSIONS[$i]}" ] && [ "${LEVELS[$i]}" != red ]; then set_red not-configured "$key is ${have:-not set}; the kit keeps it false so indexing runs only when asked"; fi
   done
@@ -258,6 +337,8 @@ state() {
   row mempalace MemPalace "about 500 MB" "remembers decisions between sessions, on your machine only" "$(ver mempalace --version)"
   grade mempalace "uv tool install mempalace==$MEMPALACE_VERSION" "uv tool uninstall mempalace"
   i=$(last)
+  plugin_installed mempalace && found mempalace:plugin
+  marketplace_added "$MP_MARKETPLACE" && found mempalace:marketplace
   if ! plugin_installed mempalace || ! marketplace_added "$MP_MARKETPLACE"; then
     plugin_steps mempalace "$MP_MARKETPLACE" "$MP_PLUGIN" mempalace
     [ "${LEVELS[$i]}" != red ] && set_red plugin-missing "the Claude Code plugin is not installed"
@@ -265,6 +346,8 @@ state() {
   local mdir cfg palace notes=""
   mdir=$(mempalace_dir); cfg="$mdir/config.json"; palace="$mdir/palace"
   if [ -f "$cfg" ] && grep -q '"palace_path"' "$cfg"; then palace=$(grep -Eo '"palace_path": *"[^"]*"' "$cfg" | sed 's/.*: *"//; s/"$//'); fi
+  [ -e "$palace" ] && found mempalace:palace
+  grep -q '"silent_save"' "$cfg" 2>/dev/null && found mempalace:silent-save
   if [ ! -e "$palace" ]; then
     step mempalace configure "mkdir -p '$PALACE_HOME' && mempalace init --yes --no-llm --backend sqlite_exact '$PALACE_HOME'" \
       "delete the palace folder MemPalace reports in \`mempalace status\` and the backend line in its config.json"
@@ -303,11 +386,25 @@ show_table() {
 idx_of() { local i; for i in "${!IDS[@]}"; do [ "${IDS[$i]}" = "$1" ] && { echo "$i"; return; }; done; }
 write_ledger() { # tool action cmd rollback ok
   mkdir -p "$FK_HOME"
-  printf '{"ts":"%s","via":"install.sh","tool":"%s","action":"%s","version":"%s","command":"%s","ok":%s,"rollback":"%s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$(pin_of "$1")" "$(json_esc "$3")" "$5" "$(json_esc "$4")" >> "$LEDGER"
+  printf '{"ts":"%s","via":"install.sh","tool":"%s","action":"%s","version":"%s","command":"%s","ok":%s,"rollback":"%s",%s}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$(pin_of "$1")" "$(json_esc "$3")" "$5" "$(json_esc "$4")" "$(ledger_meta "$1" "$2" "$3" "$4")" >> "$LEDGER"
+}
+# What was already here before this run: one pre-existing line per item the ledger does not know yet.
+write_found() {
+  mkdir -p "$FK_HOME"
+  local i it items
+  for i in "${!IDS[@]}"; do
+    items="${FOUNDS[$i]}"
+    case "${IDS[$i]}" in oh-my-claudecode|founder-kit) ;; podman) [ -n "${VERSIONS[$i]}" ] && items="$items ${PODMAN_ENGINE:-podman}" ;; *) [ -n "${VERSIONS[$i]}" ] && items="$items ${IDS[$i]}" ;; esac
+    for it in $items; do
+      grep -q "\"item\":\"$it\"" "$LEDGER" 2>/dev/null && continue
+      printf '{"ts":"%s","via":"install.sh","tool":"%s","item":"%s","kind":"pre-existing","action":"found","version":"%s","undo":null,"ok":true}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${it%%:*}" "$it" "$(case "$it" in *:*) ;; *) json_esc "${VERSIONS[$i]}" ;; esac)" >> "$LEDGER"
+    done
+  done
 }
 write_status() {
-  mkdir -p "$FK_HOME"
+  mkdir -p "$FK_HOME/state"
   local i sep="" body=""
   for i in "${!IDS[@]}"; do
     local extra=""
@@ -328,6 +425,8 @@ show_founder() { # steps only the founder can take: listed, never run
 }
 todo_ids() { printf '%s' "$STEPS" | cut -f1 | awk 'NF && !seen[$0]++'; }
 
+[ "$UNINSTALL" = 1 ] && uninstall_kit
+
 echo
 echo "${C}Founder Kit setup${N}"
 echo "Checking what is already on this computer ($(uname -s) $(uname -m))..."
@@ -336,7 +435,7 @@ state
 show_table
 
 if [ -z "$STEPS" ]; then
-  [ "$DRY" = 1 ] || write_status
+  [ "$DRY" = 1 ] || { write_status; write_found; }
   echo; echo "${G}Everything is already in place.${N}"
   show_founder
 else
@@ -348,7 +447,7 @@ else
     echo "  $n. $verb ${LABELS[$i]} (${SIZES[$i]}): ${WHYS[$i]}."
     printf '%s' "$STEPS" | awk -F'\t' -v id="$id" -v d="$D" -v n="$N" '$1 == id { print "       " d "> " $3 n }'
   done
-  echo "  Nothing is uninstalled or downgraded. Every change is logged with an undo hint in ~/.fk/install-ledger.jsonl."
+  echo "  Nothing is uninstalled or downgraded. Every change is logged with its undo command in ~/.fk/install-ledger.jsonl (fk uninstall --system takes it back)."
   printf '%s' "$STEPS" | grep -q 'sudo ' && echo "  Some steps use sudo: your computer password may be asked once."
   show_founder
   if [ "$DRY" = 1 ]; then echo; echo "Dry run: nothing was changed."; exit 0; fi
@@ -358,6 +457,7 @@ else
     case "$ans" in [nN]*) write_status; echo "Nothing was installed. Run this again whenever you are ready."; exit 1 ;; esac
   fi
 
+  write_found
   failed=""
   while IFS=$'\t' read -r id action cmd rollback; do
     [ -n "$id" ] || continue

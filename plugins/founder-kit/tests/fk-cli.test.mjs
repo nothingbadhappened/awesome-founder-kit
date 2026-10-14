@@ -7,8 +7,11 @@ import { spawnSync } from 'node:child_process';
 import { CASES, CLEAN_TWINS, runHook, outcome } from '../hooks/selftest.mjs';
 import { stateFile, stateDir } from '../hooks/lib.mjs';
 
+// fk uninstall refuses inside a Claude Code session (CLAUDE_CODE_CHILD_SESSION); these tests play the founder's terminal.
+delete process.env.CLAUDE_CODE_CHILD_SESSION;
 const FK = path.join(import.meta.dirname, '..', 'bin', 'fk.mjs');
-const fk = (cwd, ...args) => spawnSync(process.execPath, [FK, ...args], { cwd, encoding: 'utf8' });
+const { founderRun } = await import('./founder-shell.mjs'); // fk uninstall refuses below Claude Code: run it as the founder's terminal would
+const fk = (cwd, ...args) => (args[0] === 'uninstall' ? founderRun : (c, a, o) => spawnSync(c, a, { ...o, encoding: 'utf8' }))(process.execPath, [FK, ...args], { cwd, env: process.env });
 const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
 
 test('fk init refuses outside a git repo', () => {
@@ -213,6 +216,14 @@ test('integration: fk-start flow against an active .fk/', () => {
     assert.equal(fk(dir, 'config', 'set', 'paths', 'x').status, 1, 'only agent-writable keys');
     assert.equal(post('fk config set fast_gates "node -e 0"').stdout, '');
 
+    const early = fk(dir, 'kickoff', 'release');
+    assert.equal(early.status, 1, 'stays on until the constraints are committed');
+    assert.match(early.stdout, /docs\/00-constraints\.md is missing[\s\S]*fk-override kickoff <reason>/);
+    fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'docs', '00-constraints.md'), '# Constraints\n');
+    assert.match(fk(dir, 'kickoff', 'release').stdout, /not committed yet/);
+    git(dir, 'add', 'docs/00-constraints.md');
+    git(dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'constraints');
     assert.equal(fk(dir, 'kickoff', 'release').status, 0);
     assert.equal(fs.existsSync(omcJsonc), false, 'created by fk, so removed when empty');
     assert.equal(post('fk kickoff release').stdout, '');
@@ -232,7 +243,11 @@ test('fk kickoff keeps other omc.jsonc keys and founder-disabled keywords', () =
     fs.writeFileSync(f, '{\n  // founder settings\n  "team": { "size": 2 },\n  "keywordDetector": { "disabled": ["ralph"] },\n}\n');
     fk(dir, 'kickoff', 'protect');
     assert.deepEqual(JSON.parse(fs.readFileSync(f, 'utf8')).keywordDetector.disabled, ['ralph', 'autopilot']);
-    fk(dir, 'kickoff', 'release');
+    fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'docs', '00-constraints.md'), '# Constraints\n');
+    git(dir, 'add', 'docs/00-constraints.md');
+    git(dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'constraints');
+    assert.equal(fk(dir, 'kickoff', 'release').status, 0);
     assert.deepEqual(JSON.parse(fs.readFileSync(f, 'utf8')), { team: { size: 2 }, keywordDetector: { disabled: ['ralph'] } });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

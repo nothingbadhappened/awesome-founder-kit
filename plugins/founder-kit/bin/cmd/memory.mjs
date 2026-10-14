@@ -18,6 +18,7 @@ export const MP_DENY = ['event_ack', 'event_append', 'event_list', 'event_wait',
 // detect_changes, index_status, index_repository, search_code).
 export const CBM_DENY = ['query_graph', 'get_graph_schema', 'list_projects', 'delete_project', 'manage_adr', 'ingest_traces'].map((t) => CBM + t);
 const KIT_PLUGINS = /^(founder-kit|oh-my-claudecode|mempalace)@/;
+const KEEP_ON = /^(?:founder-kit@[\w.-]+|fk-practice-[\w.-]+@awesome-founder-kit|oh-my-claudecode@[\w.-]+)$/i;
 const CAPS = { cbmMb: 300, mpDrawers: 20000 };
 const USAGE = 'usage: fk memory setup [--disable plugin@marketplace]... | fk memory status [--wing <name>] | fk memory forget --purge [--wing <name>] [--yes]';
 
@@ -35,6 +36,8 @@ function setup(root, flags) {
   const disabled = [];
   for (const p of many(flags.disable)) {
     if (!/^[\w.-]+@[\w.-]+$/.test(p)) { say(`fk memory: "${p}" is not plugin@marketplace; skipped.`); continue; }
+    // The kit and OMC are what this setup runs on (and the kit's plugin carries the guards): never turned off from here.
+    if (KEEP_ON.test(p)) { say(`fk memory: ${p} is part of the kit's base setup (founder-kit, its practice packs, OMC); it stays on. Skipped.`); process.exitCode = 1; continue; }
     s.enabledPlugins ||= {};
     if (p in s.enabledPlugins) { say(`kept    enabledPlugins.${p} = ${s.enabledPlugins[p]} (already set by the project)`); continue; }
     s.enabledPlugins[p] = false;

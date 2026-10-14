@@ -9,7 +9,7 @@
       "name": "founder-kit",
       "source": "./plugins/founder-kit",
       "description": "Founder layer on top of oh-my-claudecode: idea import, kickoff review, decisions as ADRs, project standards in drydock slots, conformance lens, brand system, process journal.",
-      "version": "0.7.0"
+      "version": "0.8.0"
     },
     {
       "name": "fk-practice-core",

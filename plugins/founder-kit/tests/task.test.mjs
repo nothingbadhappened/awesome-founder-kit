@@ -14,6 +14,8 @@ process.env.HOME = SANDBOX;
 process.env.USERPROFILE = SANDBOX;
 process.env.CLAUDE_CONFIG_DIR = path.join(SANDBOX, '.claude');
 process.env.FK_TRANSCRIPTS = path.join(SANDBOX, 'transcripts');
+process.env.TMP = process.env.TEMP = process.env.TMPDIR = path.join(SANDBOX, 'tmp');
+fs.mkdirSync(process.env.TMP, { recursive: true });
 const { stateFile, writeJson, readJson } = await import('../hooks/lib.mjs');
 const { runHook } = await import('../hooks/selftest.mjs');
 const { assess } = await import('../bin/cmd/risk.mjs');
@@ -186,14 +188,20 @@ test('fk task check: R1 needs only an independent ACCEPT; from R2 every AC needs
   fk(dir, 'task', 'new', 'Small change', '--risk', 'R1');
   acs(dir, 'T-001', ['x is 7']);
   put(dir, 'src/app.js', 'export const x = 7;\n');
-  review(dir, 'T-001', 1, 'Verdict: ACCEPT\n');
+  review(dir, 'T-001', 1, `${fk(dir, 'task', 'stamp', 'T-001').stdout.trim()}\nVerdict: ACCEPT\n`);
   author(dir, [{ agent_id: 'r1', agent_type: 'oh-my-claudecode:code-reviewer', path: 'docs/tasks/T-001.review-1.md' }]);
   let r = fk(dir, 'task', 'check', 'T-001');
   assert.equal(r.status, 0, r.stdout);
-  // The same reviewer later fixes code (e.g. asked to): its earlier review is not voided.
+  // The same reviewer later touches code (e.g. asked to) without changing what it reviewed: its stamped review still counts.
   fs.appendFileSync(stateFile(dir, 'authorship.jsonl'), JSON.stringify({ ts: new Date(Date.now() + 5000).toISOString(), session_id: 's', agent_id: 'r1', agent_type: 'code-reviewer', path: 'src/app.js' }) + '\n');
   r = fk(dir, 'task', 'check', 'T-001');
   assert.equal(r.status, 0, r.stdout);
+  // Without a Reviewed line, code written after the review makes it a review of an older version.
+  review(dir, 'T-001', 1, 'Verdict: ACCEPT\n');
+  r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /not counted: docs\/tasks\/T-001\.review-1\.md: reviewed an older version; re-review needed/);
+  review(dir, 'T-001', 1, `${fk(dir, 'task', 'stamp', 'T-001').stdout.trim()}\nVerdict: ACCEPT\n`);
   // R2: the same Verdict-only review is not enough.
   const f = path.join(dir, 'docs', 'tasks', 'T-001.md');
   fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('risk: R1', 'risk: R2'));
@@ -203,12 +211,86 @@ test('fk task check: R1 needs only an independent ACCEPT; from R2 every AC needs
   assert.match(r.stdout, /R2 needs a security-reviewer review/);
 });
 
+test('fk task stamp: an ACCEPT of an older version does not count; a fresh stamp does; done records it; audit flags later changes outside a task', () => {
+  const dir = repo({ 'src/old.js': 'export const o = 1;\n' });
+  fk(dir, 'task', 'new', 'Stamped change', '--risk', 'R1');
+  put(dir, 'src/app.js', 'export const x = 11;\n');
+  const stamp = () => fk(dir, 'task', 'stamp', 'T-001');
+  const s1 = stamp();
+  assert.equal(s1.status, 0, s1.stdout);
+  assert.match(s1.stdout, /^Reviewed: [0-9a-f]{12}\r?\n$/);
+  review(dir, 'T-001', 1, `${s1.stdout.trim()}\nVerdict: ACCEPT\n`);
+  author(dir, [{ agent_id: 'r1', agent_type: 'oh-my-claudecode:code-reviewer', path: 'docs/tasks/T-001.review-1.md' }]);
+  assert.equal(stamp().stdout, s1.stdout, 'task records (docs/tasks/) do not change the stamp');
+  let r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 0, r.stdout);
+  // The implementer changes the code after the ACCEPT: that review no longer counts.
+  put(dir, 'src/app.js', 'export const x = 12;\n');
+  r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /not counted: docs\/tasks\/T-001\.review-1\.md: reviewed an older version; re-review needed/);
+  assert.match(r.stdout, /missing: no review by an independent reviewer agent/);
+  // A new untracked file and a deleted file change the stamp too.
+  const s2 = stamp().stdout;
+  put(dir, 'src/extra.js', 'export const e = 1;\n');
+  const s3 = stamp().stdout;
+  fs.rmSync(path.join(dir, 'src', 'old.js'));
+  const s4 = stamp().stdout;
+  assert.equal(new Set([s1.stdout, s2, s3, s4]).size, 4);
+  // Re-review of the final version.
+  review(dir, 'T-001', 2, `Round: 1\n${s4.trim()}\nVerdict: ACCEPT\n`);
+  author(dir, [{ agent_id: 'r2', agent_type: 'oh-my-claudecode:code-reviewer', path: 'docs/tasks/T-001.review-2.md' }]);
+  r = fk(dir, 'task', 'done', 'T-001');
+  assert.equal(r.status, 0, r.stdout);
+  const t = readJson(stateFile(dir, 'tasks.json')).tasks['T-001'];
+  assert.equal(`Reviewed: ${t.stamp}`, s4.trim());
+  assert.doesNotMatch(fk(dir, 'audit').stdout, /changed afterwards/);
+  // Changed after the close with no task covering it: fk audit says so; a later task touching the file covers it.
+  put(dir, 'src/app.js', 'export const x = 13;\n');
+  const a = fk(dir, 'audit').stdout;
+  assert.match(a, /T-001 was closed \d{4}-\d\d-\d\d, but src\/app\.js changed afterwards outside any task/);
+  assert.doesNotMatch(a, /src\/extra\.js|src\/old\.js/);
+  fk(dir, 'task', 'new', 'Follow-up', '--risk', 'R1');
+  author(dir, [{ agent_id: 'e1', agent_type: 'oh-my-claudecode:executor', path: 'src/app.js' }]);
+  assert.doesNotMatch(fk(dir, 'audit').stdout, /changed afterwards/);
+});
+
+test('fk task check: a review without a Reviewed line is stale when task files are newer (no authorship data); R0 is unaffected', () => {
+  const dir = repo();
+  fk(dir, 'task', 'new', 'Unstamped', '--risk', 'R1');
+  put(dir, 'src/app.js', 'export const x = 21;\n');
+  review(dir, 'T-001', 1, 'Verdict: ACCEPT\n');
+  author(dir, [{ agent_id: 'r1', agent_type: 'code-reviewer', path: 'docs/tasks/T-001.review-1.md' }]);
+  const old = new Date(Date.now() - 60e3);
+  fs.utimesSync(path.join(dir, 'src', 'app.js'), old, old);
+  let r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 0, r.stdout);
+  const later = new Date(Date.now() + 60e3);
+  fs.utimesSync(path.join(dir, 'src', 'app.js'), later, later);
+  r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /T-001\.review-1\.md: reviewed an older version; re-review needed \(no "Reviewed: <fk task stamp T-001>" line/);
+  put(dir, 'src/app.js', 'export const x = 1;\n'); // back to the committed code: an R0 change set
+  put(dir, 'README.md', '# App\n\nA small app that does things well.\n');
+  fk(dir, 'task', 'new', 'Docs only', '--risk', 'R0');
+  review(dir, 'T-002', 1, 'Verdict: ACCEPT\n');
+  r = fk(dir, 'task', 'check', 'T-002');
+  assert.equal(r.status, 0, r.stdout);
+  assert.doesNotMatch(r.stdout, /older version/);
+});
+
+// An installed plugin's agent, as Claude Code caches it (<config>/plugins/cache/<marketplace>/<plugin>/<version>/agents/).
+const pluginAgentFile = (plugin, name) => put(process.env.CLAUDE_CONFIG_DIR, `plugins/cache/mk/${plugin}/1.0.0/agents/${name}.md`, `---\nname: ${name}\ndescription: x\n---\nReview.\n`);
+
 test('fk config set reviewer_extra adds a domain reviewer (append-only); an implementer agent is refused', () => {
   const dir = repo();
+  pluginAgentFile('godot-prompter', 'godot-code-reviewer');
   assert.equal(fk(dir, 'config', 'set', 'reviewer_extra', 'godot-prompter:godot-code-reviewer').status, 0);
   assert.equal(fk(dir, 'config', 'set', 'reviewer_extra', 'executor').status, 1);
   assert.deepEqual(readJson(path.join(dir, '.fk', 'config.json')).reviewer_extra, ['godot-prompter:godot-code-reviewer']);
-  git(dir, 'commit', '-qam', 'add a reviewer');
+  git(dir, 'stash', '-q'); git(dir, 'checkout', '-q', 'main'); git(dir, 'stash', 'pop', '-q');
+  git(dir, 'commit', '-qam', 'add a reviewer'); // on main: the task's base (where feat leaves main) then includes it
+  git(dir, 'checkout', '-q', 'feat'); git(dir, 'merge', '-q', 'main');
   fk(dir, 'task', 'new', 'Game change', '--risk', 'R1');
   put(dir, 'src/app.js', 'export const x = 8;\n');
   review(dir, 'T-001', 1, 'Verdict: ACCEPT\n');

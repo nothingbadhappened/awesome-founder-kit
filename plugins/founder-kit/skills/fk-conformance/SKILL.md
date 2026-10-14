@@ -21,9 +21,10 @@ Accepted ADRs in `docs/adr/` (which statuses count: reference.md §Read), `docs/
 8. **Red line crossed?** Anything against `00-constraints.md`. Severity critical; stop and ask the founder.
 
 ## Verdict file (tasks with `docs/tasks/<id>.md`)
-Save `docs/tasks/<id>.review-<n>.md` (next free n) yourself with one shell command; reviewer agents have no Write tool. Never hand the text to the main session: a review it writes does not count.
+Save `docs/tasks/<id>.review-<n>.md` (next free n) yourself with one shell command; reviewer agents have no Write tool. Never hand the text to the main session: a review it writes does not count. Right before writing it, run `fk task stamp <id>` and copy its `Reviewed:` line in: a review of an older version of the change does not count.
 ```bash
 cat > docs/tasks/<id>.review-<n>.md <<'EOF'
+Reviewed: <stamp from fk task stamp <id>>
 Round: 1
 AC-1: PASS — <evidence: test name, output line, file:line>
 AC-2: FAIL — <what is missing>

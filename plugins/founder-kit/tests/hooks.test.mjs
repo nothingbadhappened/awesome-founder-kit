@@ -467,7 +467,7 @@ test('FK_HOME moves every kit file in the home folder (base-tools note, OMC cach
   const dir = fixture();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-fkhome-'));
   fixtures.push(home);
-  writeJson(path.join(home, 'base-tools.json'), { tools: { gitleaks: { level: 'red', reason: 'missing' } } });
+  writeJson(path.join(home, 'state', 'base-tools.json'), { tools: { gitleaks: { level: 'red', reason: 'missing' } } });
   const ctx = runHook(dir, 'SessionStart', { source: 'startup' }, { FK_HOME: home }).json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /base tools need attention: gitleaks \(missing\)/);
 });

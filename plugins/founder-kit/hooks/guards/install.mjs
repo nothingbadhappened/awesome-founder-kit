@@ -10,7 +10,7 @@ const PIP_GLOBAL = new Set(['--user', '--break-system-packages', '--system']);
 const VALUE_FLAGS = new Set(['--registry', '--index-url', '-i', '--python', '--source', '-s', '--scope', '--transport', '-t', '-e', '--env', '--header', '-H']);
 
 // Returns { kind, specs } for an install segment, or null.
-function parse(tok) {
+export function parse(tok) {
   const t = tok.map((x) => x.toLowerCase());
   const after = (n) => tok.slice(n);
   const [a, b, c] = t;
@@ -32,7 +32,7 @@ function parse(tok) {
   return null;
 }
 
-function specs({ kind, args }) {
+export function specs({ kind, args }) {
   const out = [];
   let version = null;
   for (let i = 0; i < args.length; i++) {

@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJson } from '../../hooks/lib.mjs';
-import { say, needRoot, parseArgs, today, fkWrite } from './adopt/util.mjs';
+import { say, needRoot, parseArgs, today, fkWrite, git } from './adopt/util.mjs';
 import { BIBLE, BIBLE_KEYS, MARK, bibleSections, loadIndex, activeAdr } from '../../hooks/knowledge.mjs';
 
 const TEMPLATE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'fk-process', 'templates', 'PROJECT.md');
@@ -98,11 +98,32 @@ function init(root, flags) {
   say(`created ${BIBLE} (${sources.length ? 'index of ' + sources.join(', ') : 'own summaries'}). Fill each section with a short summary and a link (no copied content); keep it within ${MAX_LINES} lines.`);
 }
 
-function touch(root, keys) {
+// A section's body: the lines under its heading up to the next ## heading (line endings and outer blank lines ignored).
+const sectionBody = (text, key) => {
+  const lines = String(text).split(/\r?\n/);
+  const s = bibleSections(text).find((x) => x.key === key);
+  if (!s) return null;
+  let end = lines.findIndex((l, i) => i > s.line && /^##?\s/.test(l));
+  if (end < 0) end = lines.length;
+  return lines.slice(s.line + 1, end).join('\n').trim();
+};
+
+// A stale section is marked updated only when its text changed since the accepted ADR made it stale: compared with the
+// last commit of the bible before that ADR's date. (No such commit: nothing to compare, so it is taken as updated.)
+async function touch(root, keys) {
   const file = path.join(root, BIBLE);
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch { say(`fk bible: ${BIBLE} is missing.`); process.exitCode = 1; return; }
   const want = keys.map((k) => k.toLowerCase().replace(/^§/, ''));
+  const stale = (await checkBible(root)).stale || [];
+  const unchanged = [];
+  for (const s of stale.filter((x) => want.includes(x.key))) {
+    const c = git(root, ['log', '-1', `--before=${s.since}T00:00:00`, '--format=%H', '--', BIBLE]).stdout.trim();
+    const old = c ? git(root, ['show', `${c}:${BIBLE}`]) : null;
+    if (old?.status === 0 && sectionBody(old.stdout, s.key) === sectionBody(text, s.key)) unchanged.push(s);
+  }
+  for (const s of unchanged) say(`fk bible: §${s.section} is unchanged since ${s.adrs.join(', ')} (accepted ${s.since}) made it stale; update its text first, then run this again.`);
+  if (unchanged.length) { process.exitCode = 1; return; }
   const lines = text.split(/\r?\n/);
   const done = [];
   for (const s of bibleSections(text)) {

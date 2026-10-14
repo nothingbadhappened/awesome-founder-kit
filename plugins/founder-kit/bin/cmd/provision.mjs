@@ -6,13 +6,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { projectRoot, rel, load, save, fileHash, forOs, specsFor, quarantine, skillspector, blocked, ledger, readLedger, readJson,
-  contract, say, ID } from './scout/lib.mjs';
+  contract, say, ID, commandProblem, scriptProblem } from './scout/lib.mjs';
+import { tokens } from '../../hooks/lib.mjs';
 
 const USAGE = 'usage: fk provision <proposal-id> [--dry-run] | fk provision rollback <name>';
 const SETTINGS = '.claude/settings.json';
 
+// Approved commands run as one program with its arguments, no shell, on macOS and Linux. Windows needs cmd.exe for npm-style
+// .cmd shims, so there the command line (checked free of ; & | < > ` $( and the like) goes through it unchanged.
 function run(root, cmd) {
-  const r = spawnSync(cmd, { shell: true, cwd: root, encoding: 'utf8', timeout: 20 * 60 * 1000, maxBuffer: 64 * 1024 * 1024 });
+  const why = commandProblem(cmd);
+  if (why) return { ok: false, tail: `not run: the command ${why}` };
+  const argv = tokens(cmd);
+  const opts = { cwd: root, encoding: 'utf8', timeout: 20 * 60 * 1000, maxBuffer: 64 * 1024 * 1024, windowsHide: true };
+  const r = process.platform === 'win32' ? spawnSync(cmd, { ...opts, shell: true }) : spawnSync(argv[0], argv.slice(1), opts);
   const tail = `${r.stdout || ''}\n${r.stderr || ''}`.trim().split('\n').slice(-3).join(' | ');
   return { ok: r.status === 0, tail };
 }
@@ -75,6 +82,9 @@ function installOne(root, id, e, report) {
     report.blocked.push(e.name);
   };
   if (['service', 'account'].includes(e.kind)) return report.later.push(e.name);
+  // The reviewed script must still be byte for byte what the founder's page showed (its sha256).
+  const sp = scriptProblem(root, e);
+  if (sp) return fail(`Its script was not run: ${sp}.`, ['Restore the reviewed script (git checkout -- <file>)', 'Make a delta proposal with the new script and its hash']);
   const verify = forOs(e.verify);
   if (e.present || (verify && run(root, verify).ok)) return report.present.push(e.name);
   let scanned = null;

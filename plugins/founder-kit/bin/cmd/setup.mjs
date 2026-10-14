@@ -4,6 +4,8 @@
 import readline from 'node:readline';
 import { loadLock, detect, TOOLS, osName, realExec, appendLedger, writeStatus, statusFile, shim } from './setup/core.mjs';
 import { readJson } from '../../hooks/lib.mjs';
+import { describe, notePreExisting } from './setup/ledger.mjs';
+import { claudeAncestor } from './steward/proc.mjs';
 
 const LABEL = { green: '\x1b[32mgreen \x1b[0m', yellow: '\x1b[33myellow\x1b[0m', red: '\x1b[31mred   \x1b[0m' };
 const USAGE = `usage: fk setup [--yes] [--dry-run] [--only <${TOOLS.map((t) => t.id).join('|')}>] | fk setup --shim | fk setup --remove-shim`;
@@ -42,6 +44,9 @@ export async function runSetup(args = [], deps = {}) {
   const pick = (rows) => (only ? rows.filter((r) => r.id === only) : rows);
   // The user-level `fk` command (C3): the plugin's bin/ reaches only the Bash tool, not PowerShell or a terminal.
   const sopts = { env, userPath: deps.userPath, dry };
+  // Removing the user-level fk command is the founder's call, made in a terminal (CLAUDE_CODE_CHILD_SESSION, or Claude Code
+  // among the parent processes: an agent shell).
+  if (args.includes('--remove-shim') && (env.CLAUDE_CODE_CHILD_SESSION === '1' || (deps.underClaude || claudeAncestor)())) { out('fk setup --remove-shim: refused: only you can remove the fk command. Run it yourself in a terminal outside Claude Code.'); return 1; }
   if (args.includes('--remove-shim') || args.includes('--shim')) { shim(args.includes('--shim') ? 'add' : 'remove', sopts).forEach((l) => out(l)); return 0; }
   const addShim = () => shim('add', sopts).forEach((l) => out(l));
 
@@ -51,8 +56,10 @@ export async function runSetup(args = [], deps = {}) {
   table(rows, out);
   const todo = rows.filter((r) => r.steps.length);
   const anyRed = (rs) => rs.some((r) => r.level === 'red');
+  // What was already here before this run: recorded once as pre-existing, never removed by fk uninstall --system.
+  const found = () => notePreExisting(rows.flatMap((r) => r.found || []));
   if (!todo.length) {
-    if (!dry) { writeStatus(only ? mergeRows(readJson(statusFile(), { tools: {} }), rows) : rows, lock); addShim(); }
+    if (!dry) { found(); writeStatus(only ? mergeRows(readJson(statusFile(), { tools: {} }), rows) : rows, lock); addShim(); }
     out(anyRed(rows) ? '\nSome tools need attention (see red rows); nothing here can be fixed automatically.' : '\nAll base tools are ready.');
     founderSteps(rows, out);
     return anyRed(rows) ? 1 : 0;
@@ -78,12 +85,14 @@ export async function runSetup(args = [], deps = {}) {
     return 1;
   }
 
+  found();
   for (const r of todo) {
     out(`\n-> ${r.label}`);
     for (const s of r.steps) {
       const res = exec(s, env);
       const spec = lock.tools[r.id];
-      appendLedger({ tool: r.id, action: s.action, version: spec.commit || spec.version || null, command: s.cmd, ok: !!res.ok, rollback: s.rollback });
+      appendLedger({ tool: r.id, action: s.action, version: spec.commit || spec.version || null, command: s.cmd, ok: !!res.ok, rollback: s.rollback,
+        ...describe({ tool: r.id, action: s.action, cmd: s.cmd, rollback: s.rollback, fn: s.fn }, o), ...(s.file ? { file: s.file } : {}) });
       if (!res.ok) { out(`   failed: ${s.cmd}`); break; }
     }
   }

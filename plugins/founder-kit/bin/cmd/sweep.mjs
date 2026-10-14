@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { needFkRoot, fingerprint, readLedger, writeLedger, expired, markRun, cli, say } from './steward/lib.mjs';
-import { procName, stop } from './steward/proc.mjs';
-import { parseFlags } from './ledger.mjs';
+import { procName, procIdentity, cmdHash, stop, procTable, ancestors, claudeTree } from './steward/proc.mjs';
+import { parseFlags, kitTmp } from './ledger.mjs';
 
 const inside = (child, parent) => { const r = path.relative(parent, child); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
 // Docker IDs may be short (12) or full (64) hex; names must match exactly.
@@ -45,7 +45,7 @@ export function plan(root, { includeData = false, now = Date.now() } = {}) {
   const preIds = mine.filter((e) => e.pre_existing).map((e) => String(e.id));
   const items = [];
   const skip = (e, what, reason) => items.push({ entry: e, what, action: 'skip', reason });
-  let base;
+  let base, own;
   const found = dockerLabelled(fp);
   const docker = found?.containers ? found : null;
   const engine = docker?.engine || 'docker';
@@ -59,8 +59,19 @@ export function plan(root, { includeData = false, now = Date.now() } = {}) {
       const name = procName(e.pid);
       if (!name) { items.push({ entry: e, what, action: 'drop', reason: `process ${e.pid} already gone` }); continue; }
       if (e.cmd && name !== e.cmd) { items.push({ entry: e, what, action: 'drop', reason: `process ${e.pid} is now "${name}", not "${e.cmd}" (number reused); left alone` }); continue; }
-      if (!e.cmd) { skip(e, what, `process ${e.pid} has no recorded program name; stop it yourself if it is ours`); continue; }
-      items.push({ entry: e, what: `${what} (process ${e.pid}, ${name})`, action: 'stop', run: () => stop(e.pid) });
+      // Same process only when its start time (within 2 s) and command line still match what fk ledger add recorded.
+      const unsure = `can't confirm process ${e.pid} is the same process; stop it yourself if it is ours`;
+      if (!e.cmd || !e.started) { skip(e, what, unsure); continue; }
+      // Never this sweep's own parent chain or Claude Code's processes, whatever the ledger says.
+      own ??= (() => { const t = procTable(); return new Set([...ancestors(t), ...claudeTree(t)]); })();
+      if (own.has(e.pid)) { skip(e, what, `process ${e.pid} is this shell, Claude Code or one of its own processes; never stopped by the sweep`); continue; }
+      const id = procIdentity(e.pid);
+      if (!id.start) { skip(e, what, unsure); continue; }
+      if (Math.abs(id.start - Date.parse(e.started)) > 2000 || (e.cmd_hash && id.cmdline && cmdHash(id.cmdline) !== e.cmd_hash)) {
+        items.push({ entry: e, what, action: 'drop', reason: `process number ${e.pid} reused by another program; left alone` }); continue;
+      }
+      const byName = !e.cmd_hash || !id.cmdline ? ', matched on start time and program name only: its command line cannot be read here' : '';
+      items.push({ entry: e, what: `${what} (process ${e.pid}, ${name}${byName})`, action: 'stop', run: () => stop(e.pid) });
     } else if (e.kind === 'container') {
       items.push({ entry: e, what, action: 'remove', run: () => cli(engine, ['rm', '-f', e.id]).ok, docker: e.id });
     } else if (e.kind === 'volume') {
@@ -76,6 +87,7 @@ export function plan(root, { includeData = false, now = Date.now() } = {}) {
     } else if (e.kind === 'tmpdir' || e.kind === 'temp') {
       if (!fs.existsSync(e.id)) { items.push({ entry: e, what, action: 'drop', reason: 'folder already gone' }); continue; }
       if (!inside(path.resolve(e.id), fs.realpathSync(os.tmpdir())) && !inside(path.resolve(e.id), os.tmpdir())) { skip(e, what, 'not under the system temp folder; remove it yourself'); continue; }
+      if (!kitTmp(root, e.id)) { skip(e, what, 'not a folder fk ledger mktemp made for this project; remove it yourself'); continue; }
       items.push({ entry: e, what, action: 'remove', run: () => { fs.rmSync(e.id, { recursive: true, force: true }); return !fs.existsSync(e.id); } });
     } else {
       skip(e, what, e.kind === 'cloud' ? 'cloud resource: the kit never deletes these; remove it in the provider console or ask the founder' : 'no automatic way to stop this kind; stop it yourself');

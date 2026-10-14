@@ -1,5 +1,6 @@
 // C2: agreed gates cannot be quietly weakened. PreToolUse checks file edits; tamper() checks shell/MCP writes after the fact.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HOOK_OWNED, relPath, protectedClass, gateText, quickDiff, readSnapshot, writeJson, shellTool, segments, tokens, globToRegex, fkHome, stateFile } from '../lib.mjs';
@@ -51,7 +52,7 @@ const PLUGIN_ROOT_SET = /\bCLAUDE_PLUGIN_ROOT\s*=|\$env:CLAUDE_PLUGIN_ROOT\s*=/i
 const STATE_REF = /\.fk[\\/]state\b/i;
 const DECODE_RUN = /\bbase64\s+(?:-d|--decode|-D)\b[^;&]*\|\s*node\b|\bnode\s+(?:[^|;&]*\s)?--input-type\b(?![^|;&]*\s(?:-e|--eval|-p|--print)\b)|FromBase64String[\s\S]*\bnode\b/i;
 const DOC = /\.(?:md|mdx|markdown|txt)$/i;
-const INTERNAL = 'fk gate-guard: the kit hooks run only inside Claude Code; nothing invokes, imports, copies or edits them, or their state, from a command or a file.';
+const INTERNAL = 'fk gate-guard: the kit hooks run only inside Claude Code; nothing invokes, imports, copies or edits them, or the kit folder in your home (~/.fk), from a command or a file.';
 const KIT_OVERRIDE = ' If this is ordinary project work that only looks like it, the founder types: fk-override gate-guard <reason>.';
 // Kit-anchored text: the resolved hooks dir, a founder-kit/.../hooks/ path, or a kit identifier next to "founder-kit".
 const kitPath = (text) => norm(text).includes(HOOKS_DIR) || KIT_PATH.test(text);
@@ -65,7 +66,108 @@ const isFk = (tok) => {
   const c = tok.replace(/^(?:\.[\\/])+/, '').split(/[\\/]/);
   return c.some((x) => x.toLowerCase() === '.fk') || (/^\.[^\\/]*[*?[]/.test(c[0]) && globToRegex(c[0]).test('.fk'));
 };
-const removesFk = (seg) => { const t = tokens(seg); return REMOVE.test(t[0] || '') && t.slice(1).some((a) => !a.startsWith('-') && isFk(a)); };
+// Also `find … -name .fk -delete` (or -exec rm), `git clean … .fk` and `git rm -r … .fk`.
+const removesFk = (seg) => {
+  const t = strip(tokens(seg));
+  const names = t.slice(1).some((a) => !a.startsWith('-') && isFk(a));
+  if (REMOVE.test(t[0] || '')) return names;
+  if (/^find$/i.test(t[0] || '')) return names && t.some((a, i) => a === '-delete' || (/^-exec(?:dir)?$/.test(a) && REMOVE.test(base(t[i + 1]))));
+  if (!/^git$/i.test(t[0] || '')) return false;
+  const i = t.findIndex((a, k) => k > 0 && !a.startsWith('-'));
+  return i > 0 && /^(?:clean|rm)$/i.test(t[i]) && t.slice(i + 1).some((a) => !a.startsWith('-') && isFk(a));
+};
+
+// ---- <home>/.fk (kit state, caches, quarantine): never written, removed or entered from an agent shell (hard stop).
+// Text checks: they stop a drifting agent, not a determined one (only Claude Code's sandbox does that, fk doctor).
+const HOME_VAR = String.raw`(?:~|\$\{?HOME\}?|%USERPROFILE%|%HOMEPATH%|\$env:(?:USERPROFILE|HOME))`;
+const HOME_FK = new RegExp(String.raw`${HOME_VAR}[\\/]+\.fk(?=[\\/"'\s;&|)]|$)`, 'i');
+const kitHomes = () => [...new Set([fkHome(), path.join(os.homedir(), '.fk')].map((d) => norm(path.resolve(d)).replace(/\/+$/, '')))];
+const atOrUnder = (p, dir) => p === dir || p.startsWith(dir + '/');
+const namesKitHome = (text) => HOME_FK.test(text) || kitHomes().some((d) => {
+  const t = norm(text), i = t.indexOf(d);
+  return i >= 0 && /^(?:$|[/"'\s;&|)])/.test(t.slice(i + d.length));
+});
+// cd/pushd/Set-Location, followed across the segments of one command: into <home>/.fk, or at home and then naming .fk.
+const CD = /^(?:cd|pushd|chdir|set-location|sl|push-location)$/i;
+const expandHome = (a) => a.replace(new RegExp(String.raw`^${HOME_VAR}(?=[\\/]|$)`, 'i'), () => os.homedir());
+function entersKitHome(segs, start) {
+  let cwd = start;
+  for (const seg of segs) {
+    const t = tokens(seg);
+    if (CD.test(t[0] || '')) {
+      const arg = t.slice(1).find((x) => !/^-(?:path|literalpath|passthru|stackname|[a-z])$/i.test(x));
+      if (!arg) cwd = os.homedir();
+      else if (arg === '-') cwd = null;
+      else { const a = expandHome(arg); cwd = path.isAbsolute(a) ? path.resolve(a) : cwd ? path.resolve(cwd, a) : null; }
+      if (cwd && kitHomes().some((d) => atOrUnder(norm(cwd), d))) return true;
+    } else if (cwd && !READ_ONLY(seg) && norm(path.resolve(cwd)) === norm(path.resolve(os.homedir())) && /(?:^|[\s"'=])\.fk(?=[\\/\s"';]|$)/.test(seg)) return true;
+  }
+  return false;
+}
+// Inline interpreter code (node -e, python -c, pwsh -Command, ...) that names .fk or the kit, or is encoded so it cannot
+// be read: the usual way around the text checks above. Only the inline code counts, so a script that merely reads the
+// home folder (expanduser, $HOME, USERPROFILE) passes. Code that builds the name in pieces ('.f' + 'k') is not seen:
+// these text checks stop a drifting agent, not a determined one (only Claude Code's sandbox does that, fk doctor).
+// Overridable.
+const INTERP = /^(?:node|nodejs|python[\d.]*|py|deno|bun|ruby|perl|pwsh|powershell)(?:\.exe)?$/i;
+const INLINE_FLAG = /^(?:-[ecp]|-pe|-ne|--eval|--print|-command|-encodedcommand|-enc|-ec)(?:=|$)/i;
+const KIT_TOUCH = /\.fk\b|founder-kit|-encodedcommand|-enc\b|-ec\b/i;
+const base = (t) => String(t || '').split(/[\\/]/).pop();
+// Wrappers in front of the real command: VAR=x, env [-i] [-u NAME] [-C dir] [-S "cmd"], command, exec, sudo, nohup,
+// time, unbuffer, nice [-n N], stdbuf -oL, timeout [opts] DURATION, xargs [opts] (its command is the rest of the words).
+const OPT_ARG = {
+  env: /^(?:-u|--unset|-C|--chdir)$/,
+  nice: /^(?:-n|--adjustment)$/,
+  stdbuf: /^-[ioe]$/,
+  timeout: /^(?:-s|--signal|-k|--kill-after)$/,
+  xargs: /^(?:-[adEILnPs]|--arg-file|--delimiter|--eof|--replace|--max-lines|--max-args|--max-procs|--max-chars|--process-slot-var)$/,
+};
+const strip = (t) => {
+  for (let i = 0; ;) {
+    if (i < t.length && (/^\w+=/.test(t[i]) || /^(?:command|exec|sudo|nohup|time|call|unbuffer|&)$/i.test(t[i]))) { i++; continue; }
+    const w = String(t[i] || '').toLowerCase();
+    if (!Object.hasOwn(OPT_ARG, w)) return t.slice(i);
+    for (i++; i < t.length && /^-/.test(t[i]); i++) {
+      if (w === 'env' && /^(?:-S|--split-string)$/.test(t[i])) return strip([...tokens(t[i + 1] || ''), ...t.slice(i + 2)]);
+      if (OPT_ARG[w].test(t[i])) i++;
+    }
+    if (w === 'timeout') i++; // the duration
+  }
+};
+// The inline code runs from the flag to the end of its command (tokens keep a quoted ; or | inside one word).
+function inlineHome(seg, cmd) {
+  const at = cmd.indexOf(seg);
+  const all = strip(tokens(at >= 0 ? cmd.slice(at) : seg));
+  const end = all.findIndex((x) => /^(?:&&|\|\||;|\||&)$/.test(x));
+  const t = end < 0 ? all : all.slice(0, end);
+  if (!INTERP.test(base(t[0]))) return false;
+  const i = t.findIndex((x, k) => k > 0 && INLINE_FLAG.test(x));
+  const code = i > 0 ? t.slice(i).join(' ') : /^(?:deno|bun)/i.test(base(t[0])) && t[1] === 'eval' ? t.slice(2).join(' ') : '';
+  return !!code && KIT_TOUCH.test(code);
+}
+// fk uninstall and fk setup --remove-shim take the guards out: only the founder runs them, in a terminal (hard stop).
+// The installers' uninstall (install.ps1 -Uninstall, install.sh --uninstall, FK_UNINSTALL=1 when piped) is the same: a
+// script name and a separate uninstall flag, or the variable set. A quoted commit message is one token, so it passes.
+function removesKit(cmd, depth = 0) {
+  const all = segments(cmd).flatMap((s) => tokens(s));
+  if (all.some((x) => /^(?:\$env:)?FK_UNINSTALL=/i.test(x))
+    || (all.some((x) => !/\s/.test(x) && /install\.(?:ps1|sh)\b/i.test(x)) && all.some((x) => /^--?uninstall$/i.test(x)))) return 'the installer\'s uninstall';
+  const segs = segments(cmd);
+  for (const [n, seg] of segs.entries()) {
+    let t = strip(tokens(seg));
+    if (/^node(?:\.exe)?$/i.test(base(t[0])) && /^fk\.mjs$/i.test(base(t[1]))) t = t.slice(1);
+    const bin = base(t[0]).toLowerCase();
+    if (/^fk(?:\.cmd|\.mjs)?$/.test(bin)) {
+      if (t[1] === 'uninstall') return t.includes('--system') ? 'fk uninstall --system' : 'fk uninstall';
+      if (t[1] === 'setup' && t.includes('--remove-shim')) return 'fk setup --remove-shim';
+      // `echo uninstall --system | xargs fk`: the words piped in become fk's arguments.
+      if (n > 0 && tokens(seg).some((x) => /^xargs$/i.test(x)) && /\buninstall\b|--remove-shim/i.test(segs[n - 1])) return 'fk uninstall (through xargs)';
+    }
+    const i = /^(?:bash|sh|zsh|dash|pwsh|powershell|cmd)(?:\.exe)?$/i.test(bin) ? t.findIndex((x) => /^(?:-c|-command|\/c|\/k)$/i.test(x)) : -1;
+    if (i > 0 && t[i + 1] && depth < 2) { const r = removesKit(t.slice(i + 1).join(' '), depth + 1); if (r) return r; }
+  }
+  return null;
+}
 
 const lines = (t) => String(t || '').split(/\r?\n/).map((l) => l.trim().replace(/,$/, '')).filter(Boolean);
 
@@ -155,12 +257,15 @@ const under = (file, dir) => { const r = path.relative(dir, file); return !!r &&
 export function check({ root, input, tool, ti }) {
   if (shellTool(tool)) {
     const cmd = String(ti.command || '');
-    const segs = segments(cmd).filter((seg) => !READ_ONLY(seg));
-    const state = norm(path.join(fkHome(), 'state'));
-    if (PLUGIN_ROOT_SET.test(cmd) || segs.some((seg) => HOOK_EVENT.test(seg) || STATE_REF.test(seg) || norm(seg).includes(state) || kitStateCall(seg))) {
+    const gone = removesKit(cmd);
+    if (gone) return { decision: 'deny', reason: `fk gate-guard: ${gone} takes the kit out (its guards, or what it installed); only the founder runs it, in a terminal outside Claude Code.`, noOverride: true };
+    const all = segments(cmd);
+    const segs = all.filter((seg) => !READ_ONLY(seg));
+    if (PLUGIN_ROOT_SET.test(cmd) || segs.some((seg) => HOOK_EVENT.test(seg) || STATE_REF.test(seg) || namesKitHome(seg) || kitStateCall(seg))
+      || entersKitHome(all, input?.cwd ? path.resolve(input.cwd) : root)) {
       return { decision: 'deny', reason: INTERNAL, noOverride: true };
     }
-    if (DECODE_RUN.test(cmd) || segs.some(kitRef)) return { decision: 'deny', reason: INTERNAL + KIT_OVERRIDE };
+    if (DECODE_RUN.test(cmd) || segs.some(kitRef) || all.some((seg) => inlineHome(seg, cmd))) return { decision: 'deny', reason: INTERNAL + KIT_OVERRIDE };
     if (segs.some(removesFk)) {
       return { decision: 'deny', reason: 'fk gate-guard: .fk/ is removed or moved only by `fk uninstall` (the founder runs it).', noOverride: true };
     }
@@ -173,7 +278,7 @@ export function check({ root, input, tool, ti }) {
   if (!['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(tool)) return null;
   const file = ti.file_path || ti.notebook_path || '';
   const text = [ti.content, ti.new_string, ti.new_source, ...(ti.edits || []).map((e) => e.new_string)].filter(Boolean).join('\n');
-  if (file && (under(path.resolve(root, file), path.join(fkHome(), 'state')) || (!DOC.test(file) && kitStateCall(text)))) {
+  if (file && (kitHomes().some((d) => atOrUnder(norm(path.resolve(root, file)), d)) || (!DOC.test(file) && kitStateCall(text)))) {
     return { decision: 'deny', reason: INTERNAL, noOverride: true };
   }
   if (file && (under(norm(path.resolve(root, file)), HOOKS_DIR) || (!DOC.test(file) && kitRef(text)))) {
