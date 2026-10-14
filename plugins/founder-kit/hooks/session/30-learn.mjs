@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { readJson, writeJson, fkHome } from '../lib.mjs';
+import { readJson, writeJson, fkHome, rootKey } from '../lib.mjs';
 import { parseHead, isCandidate, FILE } from '../../bin/cmd/lessons.mjs';
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -16,7 +16,7 @@ export default function learnNote({ root }) {
     const n = text.split(/\r?\n/).filter((l) => l.startsWith('## ')).map(parseHead).filter((h) => h && isCandidate(h)).length;
     if (!n) return undefined;
     const file = path.join(fkHome(), 'learn-notes.json');
-    const key = crypto.createHash('sha256').update(path.resolve(root).toLowerCase()).digest('hex').slice(0, 16);
+    const key = rootKey(root);
     const seen = readJson(file, {});
     if (Date.now() - (seen[key] || 0) < WEEK) return undefined;
     writeJson(file, { ...seen, [key]: Date.now() });

@@ -100,12 +100,16 @@ export function loadConfig(root) {
 export const fkHome = () => process.env.FK_HOME || path.join(os.homedir(), '.fk');
 const STATE_FILES = ['snapshots.json', 'compliance.jsonl'];
 const stateDirs = new Map();
+// One identity per project folder: real path (Windows 8.3 short names expanded), case-folded on Windows.
+export function rootKey(root) {
+  let real = path.resolve(root);
+  try { real = fs.realpathSync.native(real); } catch { /* not there */ }
+  return hash(process.platform === 'win32' ? real.toLowerCase() : real);
+}
 export function stateDir(root) {
   const key = `${fkHome()}|${root}`;
   if (stateDirs.has(key)) return stateDirs.get(key);
-  let real = path.resolve(root);
-  try { real = fs.realpathSync.native(real); } catch { /* not there */ }
-  const dir = path.join(fkHome(), 'state', hash(process.platform === 'win32' ? real.toLowerCase() : real));
+  const dir = path.join(fkHome(), 'state', rootKey(root));
   // First run after the move out of the repo: carry the old snapshot and log over. An in-repo override is dropped, never carried.
   const old = path.join(root, '.fk');
   if (!fs.existsSync(dir) && [...STATE_FILES, 'overrides.json'].some((f) => fs.existsSync(path.join(old, f)))) {
