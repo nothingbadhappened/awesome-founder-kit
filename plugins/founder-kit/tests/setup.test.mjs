@@ -603,8 +603,24 @@ function shSandbox(tools, extra = {}) {
     shBin(sb.bin, name, `${name === 'mise' ? '[ "$1" = exec ] && exit 1\n' : ''}${cfg}echo "${text}"`);
   }
   for (const [name, body] of Object.entries(extra)) shBin(sb.bin, name, body);
-  const utils = WIN ? 'C:\\Program Files\\Git\\usr\\bin' : '/usr/bin:/bin';
-  return { sb, env: { ...sb.env, PATH: `${sb.bin}${path.delimiter}${utils}` } };
+  return { sb, env: { ...sb.env, PATH: `${sb.bin}${path.delimiter}${shUtils(sb)}` } };
+}
+// System utilities for the bash installer, minus every tool the tests mock: a CI runner with a real podman, gh or docker
+// in /usr/bin must not leak into a simulated machine. On Windows, Git's usr/bin holds none of them.
+const MOCKED = ['podman', 'podman-compose', 'docker', 'docker-compose', 'gh', 'git-lfs', 'mise', 'just', 'uv', 'claude', 'gitleaks', 'skillspector', 'codebase-memory-mcp', 'mempalace', 'brew', 'wsl', 'winget'];
+function shUtils(sb) {
+  if (WIN) return 'C:\\Program Files\\Git\\usr\\bin';
+  const dir = path.join(sb.root, 'sysbin');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const src of ['/usr/bin', '/bin']) {
+    let names = [];
+    try { names = fs.readdirSync(src); } catch { continue; }
+    for (const n of names) {
+      if (MOCKED.includes(n) || fs.existsSync(path.join(dir, n))) continue;
+      try { fs.symlinkSync(path.join(src, n), path.join(dir, n)); } catch { /* skip */ }
+    }
+  }
+  return dir;
 }
 // eslint-disable-next-line no-control-regex
 const shPlan = (out) => out.replace(/\x1b\[\d+m/g, '').split('\n').filter((l) => /^\s+> /.test(l)).map((l) => l.replace(/^\s+> /, ''));
