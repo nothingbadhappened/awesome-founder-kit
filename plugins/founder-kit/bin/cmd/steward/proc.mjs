@@ -1,11 +1,22 @@
 // Process helpers, cross-platform: name of a running PID (null when gone) and a stop that waits briefly.
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const sys32 = (exe) => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', exe);
 
+// A zombie (exited, not yet reaped by its parent) counts as gone: signal 0 still succeeds on it on POSIX.
+export function zombie(pid) {
+  if (process.platform === 'win32') return false;
+  try {
+    if (process.platform === 'linux') return / Z /.test(fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^\d+ \(.*\) /, ' ').slice(0, 3));
+    return /^Z/.test(spawnSync('ps', ['-p', String(pid), '-o', 'stat='], { encoding: 'utf8', timeout: 5000 }).stdout.trim());
+  } catch { return false; }
+}
+
 export function alive(pid) {
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+  try { process.kill(pid, 0); } catch (e) { return e.code === 'EPERM'; }
+  return !zombie(pid);
 }
 
 // Executable base name, lower case, no .exe. null when the process is not running.

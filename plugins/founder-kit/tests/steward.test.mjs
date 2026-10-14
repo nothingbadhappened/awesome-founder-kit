@@ -8,6 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { takeSnapshot, writeJson, readSnapshot } from '../hooks/lib.mjs';
 import { fingerprint } from '../bin/cmd/steward/lib.mjs';
+import { alive } from '../bin/cmd/steward/proc.mjs';
 
 process.env.FK_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'fk-home-')); // kit state stays out of the real home
 
@@ -73,7 +74,7 @@ function project() {
 }
 const cleanup = (dir) => fs.rmSync(dir, { recursive: true, force: true });
 const sleeper = () => spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-const isAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const isAlive = (pid) => alive(pid); // the kit's check: zombies (exited, unreaped) count as gone
 const ledgerRows = (dir) => fs.readFileSync(path.join(dir, '.fk', 'ledger.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const waitGone = (pid) => { const until = Date.now() + 5000; while (isAlive(pid) && Date.now() < until) spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},100)']); return !isAlive(pid); };
 
