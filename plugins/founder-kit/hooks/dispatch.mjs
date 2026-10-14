@@ -4,11 +4,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { findRoot, loadConfig, log, activeOverride, addOverride, takeSnapshot, refreshSnapshot, relPath, sanctionedJson, writeJson,
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { findRoot, loadConfig, log, logContext, activeOverride, addOverride, sessionSnapshot, refreshSnapshot, relPath, sanctionedJson, writeJson,
   protectedClass, shellTool, GUARDS, FAIL_CLOSED, omcLatestCached, omcPlugin, omcStatus, readOmcCache, writeOmcCache, OMC_UPDATE } from './lib.mjs';
 
 const FK_CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'fk.mjs');
+// The plugin's bin/ is on the Bash tool PATH only (not PowerShell's); this line keeps `fk` reachable either way.
+const CLI_NOTE = `fk CLI: if "fk" is not found, run: node "${path.resolve(FK_CLI)}"`;
 
 // Guards load only when the project has opted in, so the inert path stays tiny.
 let pointer, gate, PRE_GUARDS;
@@ -33,7 +35,7 @@ function preToolUse(ctx) {
     if (!r) continue;
     const entry = { event: 'PreToolUse', guard: g.name, decision: r.decision, tool, agent_type: input.agent_type, reason: r.reason };
     if ((r.decision === 'deny' || r.decision === 'ask') && !r.noOverride) {
-      const o = activeOverride(root, g.name);
+      const o = activeOverride(root, g.name, input.session_id);
       if (o) { log(root, { ...entry, decision: 'allow-override', override: o.reason }); continue; }
     }
     log(root, entry);
@@ -51,7 +53,7 @@ function postToolUse({ root, input, tool, ti }) {
     return null;
   }
   if (!shellTool(tool) && !tool.startsWith('mcp__')) return null;
-  const r = gate.tamper(root, !!activeOverride(root, 'gate-guard'));
+  const r = gate.tamper(root, !!activeOverride(root, 'gate-guard', input.session_id));
   if (!r) return null;
   log(root, { event: 'PostToolUse', guard: 'gate-guard', decision: r.decision === 'block' ? 'tamper' : r.decision, tool, agent_type: input.agent_type, changed: r.changed });
   return r.decision === 'block' ? { decision: 'block', reason: r.reason } : null;
@@ -60,31 +62,33 @@ function postToolUse({ root, input, tool, ti }) {
 // Founder-typed lines (UserPromptSubmit is the human). Never blocks; a line it cannot read just gets a note.
 // A directive counts only when it is the whole message (at most 3 lines, every line a directive): pasted text
 // that merely contains one (a log, a doc, an agent's output) never approves anything.
-const TOOL_SPEC = /^(?:mcp:|plugin:)\S+$|^@?[^@\s]+@v?\d+(?:\.\d+)*(?:[-+][\w.]+)?$/i;
+const TOOL_SPEC = /^(?:mcp:|plugin:|brew:|winget:|choco:|scoop:)\S+$|^@?[^@\s]+@v?\d+(?:\.\d+)*(?:[-+][\w.]+)?$/i;
 const DIRECTIVE = /^fk-(?:approve|override)\b/i;
 const PASTED = 'fk: an fk-approve/fk-override line inside pasted text was ignored. Type it alone as your whole message to approve.';
 
-function directive(root, line, notes) {
+function directive(root, line, notes, session) {
+  const by = { by: 'founder-prompt', session, date: new Date().toISOString().slice(0, 10) };
   const m = /^fk-override[ \t]+(\S+)[ \t]+(\S.*)$/i.exec(line);
   if (m) {
     let guard = m[1].toLowerCase();
     if (!guard.endsWith('-guard')) guard += '-guard';
     if (!GUARDS.includes(guard)) return notes.push(`fk: unknown guard "${m[1]}". Known: ${GUARDS.join(', ')}. No override recorded.`);
-    const o = addOverride(root, guard, m[2].trim());
-    log(root, { event: 'UserPromptSubmit', guard, decision: 'override-set', reason: o.reason, expires: o.expires });
-    return notes.push(`fk: founder approved an override of ${guard} until ${o.expires} (reason: ${o.reason}). It is logged in .fk/compliance.jsonl.`);
+    const o = addOverride(root, guard, m[2].trim(), session);
+    log(root, { event: 'UserPromptSubmit', guard, decision: 'override-set', reason: o.reason, expires: o.expires, session });
+    return notes.push(`fk: founder approved an override of ${guard} until ${o.expires} (reason: ${o.reason}). It is in the kit log (fk audit).`);
   }
   const t = /^fk-approve[ \t]+tool[ \t]+(\S+)[ \t]+(\S.*)$/i.exec(line);
   if (t) {
     const enforce = t[1].toLowerCase() === 'enforce';
     const spec = t[1].toLowerCase().replace(/==/, '@');
-    if (!enforce && !TOOL_SPEC.test(spec)) return notes.push(`fk: "${t[1]}" is not name@exact-version, mcp:<name> or plugin:<id>. Nothing approved.`);
+    if (!enforce && !TOOL_SPEC.test(spec)) return notes.push(`fk: "${t[1]}" is not name@exact-version, mcp:<name>, plugin:<id> or brew|winget|choco|scoop:<name>. Nothing approved.`);
     const file = path.join(root, '.fk', 'toolchain.json');
     const tc = sanctionedJson(root, '.fk/toolchain.json', { approved: [], enforce: true });
     if (enforce) tc.enforce = true; else tc.approved = [...new Set([...(tc.approved || []), spec])];
+    tc.approvals = { ...(tc.approvals || {}), [enforce ? 'enforce' : spec]: by };
     writeJson(file, tc);
     refreshSnapshot(root, ['.fk/toolchain.json']);
-    log(root, { event: 'UserPromptSubmit', guard: 'install-guard', decision: enforce ? 'enforce-tools' : 'approve-tool', reason: `${enforce ? 'enforce' : spec}: ${t[2].trim()}` });
+    log(root, { event: 'UserPromptSubmit', guard: 'install-guard', decision: enforce ? 'enforce-tools' : 'approve-tool', reason: `${enforce ? 'enforce' : spec}: ${t[2].trim()}`, session });
     return notes.push(enforce ? 'fk: founder switched the install guard to enforce: installs outside .fk/toolchain.json are now blocked.'
       : `fk: founder approved ${spec} for the toolchain (.fk/toolchain.json); unapproved installs are now blocked.`);
   }
@@ -93,25 +97,43 @@ function directive(root, line, notes) {
     const file = path.join(root, '.fk', 'budgets.json');
     const bj = sanctionedJson(root, '.fk/budgets.json', {});
     const provider = b[1].toLowerCase();
-    bj.providers = { ...(bj.providers || {}), [provider]: { monthly_usd: Number(b[2]), hard_cap: !!b[3], approved: new Date().toISOString().slice(0, 10) } };
+    bj.providers = { ...(bj.providers || {}), [provider]: { monthly_usd: Number(b[2]), hard_cap: !!b[3], approved: by.date, by: by.by, session } };
     writeJson(file, bj);
     refreshSnapshot(root, ['.fk/budgets.json']);
-    log(root, { event: 'UserPromptSubmit', guard: 'cloud-guard', decision: 'approve-budget', reason: `${provider} $${b[2]}/month${b[3] ? ' hard cap' : ''}` });
+    log(root, { event: 'UserPromptSubmit', guard: 'cloud-guard', decision: 'approve-budget', reason: `${provider} $${b[2]}/month${b[3] ? ' hard cap' : ''}`, session });
     return notes.push(`fk: founder recorded a ${provider} budget of $${b[2]}/month${b[3] ? ' with a hard cap' : ' (alert only)'} in .fk/budgets.json.`);
   }
   if (/^fk-approve[ \t]+budget\b/i.test(line)) return notes.push('fk: budget line not understood. Format: fk-approve budget <provider> <usd/month> [hard-cap]. Nothing recorded.');
+  for (const d of extraDirectives) if (d.match(line)) return d.apply(root, line, notes, session);
   return notes.push(`fk: "${line.slice(0, 60)}" not understood. Formats: fk-override <guard> <reason> | fk-approve tool <name@version|enforce> <reason> | fk-approve budget <provider> <usd/month> [hard-cap]. Nothing recorded.`);
 }
 
+// Claude Code exports CLAUDE_PLUGIN_ROOT to plugin hook processes, not to commands the Bash tool runs. A dispatcher
+// copied elsewhere, or started from a command, is not the installed plugin and records nothing.
+const real = (p) => { try { p = fs.realpathSync.native(p); } catch { /* keep as is */ } const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
+function pluginRuntime() {
+  const root = process.env.CLAUDE_PLUGIN_ROOT;
+  if (!root) return false;
+  const rel = path.relative(real(root), real(HERE));
+  return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+const UNTRUSTED = 'fk: this hook is not running as the installed founder-kit plugin (CLAUDE_PLUGIN_ROOT does not contain it), so the fk-approve/fk-override line was not recorded.';
+
 function userPromptSubmit({ root, input }) {
+  const session = input.session_id || null;
   const lines = String(input.prompt || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (!lines.some((l) => DIRECTIVE.test(l))) return null;
+  if (!pluginRuntime()) {
+    log(root, { event: 'UserPromptSubmit', guard: 'dispatch', decision: 'directive-untrusted-runtime' });
+    return { systemMessage: UNTRUSTED, ...context('UserPromptSubmit', `${UNTRUSTED} Nothing was approved or overridden; do not act as if it were.`) };
+  }
+  Object.assign(logContext, { runtime: 'plugin', plugin_root: real(process.env.CLAUDE_PLUGIN_ROOT) });
   if (lines.length > 3 || !lines.every((l) => DIRECTIVE.test(l))) {
     log(root, { event: 'UserPromptSubmit', guard: 'dispatch', decision: 'directive-ignored' });
     return { systemMessage: PASTED, ...context('UserPromptSubmit', `${PASTED} Nothing was approved or overridden; do not act as if it were.`) };
   }
   const notes = [];
-  for (const l of lines) directive(root, l, notes);
+  for (const l of lines) directive(root, l, notes, session);
   return { systemMessage: notes.join('\n'), ...context('UserPromptSubmit', notes.join('\n')) };
 }
 
@@ -124,6 +146,23 @@ function omcNotice() {
   writeOmcCache({ notified: Date.now() });
   const below = st.level === 'red' ? `, below the supported floor ${st.floor}` : '';
   return `fk: oh-my-claudecode ${st.installed} is installed${below}; ${st.latest} is out. Ask the founder in plain words (AskUserQuestion) whether to update now (${OMC_UPDATE.plugin}, then restart). Never update without a yes.`;
+}
+
+// Extension points: hooks/session/*.mjs (SessionStart notes) and hooks/directives/*.mjs ({ match(line), apply(root, line, notes) }).
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+async function loadDir(dir) {
+  const d = path.join(HERE, dir);
+  if (!fs.existsSync(d)) return [];
+  const names = fs.readdirSync(d).filter((n) => n.endsWith('.mjs')).sort();
+  return Promise.all(names.map((n) => import(pathToFileURL(path.join(d, n)).href)));
+}
+let extraDirectives = [];
+async function sessionNotes(ctx) {
+  const notes = [];
+  for (const m of await loadDir('session')) {
+    try { notes.push(await m.default(ctx)); } catch (e) { log(ctx.root, { event: 'SessionStart', guard: 'session', decision: 'allow', error: String(e?.message || e) }); }
+  }
+  return notes;
 }
 
 async function main() {
@@ -143,6 +182,7 @@ async function main() {
   const ctx = { root, gitDir, input, tool: String(input.tool_name || ''), ti: input.tool_input || {} };
   try {
     await loadGuards();
+    if (event === 'UserPromptSubmit') extraDirectives = (await loadDir('directives')).map((m) => m.default);
     switch (event) {
       case 'PreToolUse': return out(preToolUse(ctx));
       case 'PostToolUse': return out(postToolUse(ctx));
@@ -154,13 +194,16 @@ async function main() {
       }
       case 'SessionStart':
         if (input.source === 'startup' || input.source === 'clear') {
-          takeSnapshot(root);
-          const note = omcNotice();
-          return note ? out(context(event, note)) : undefined;
+          const kept = sessionSnapshot(root);
+          if (kept.length) log(root, { event, guard: 'gate-guard', decision: 'tamper-persisted', changed: kept });
+          const tamper = kept.length && `fk: ${kept.join(', ')} changed outside the kit since the last session; not trusted until restored (git checkout -- <file>) or re-approved.`;
+          // hooks/session/*.mjs: default export (ctx) => short note | undefined; each must be fast and never throw past here.
+          const notes = [tamper, omcNotice(), ...(await sessionNotes(ctx)), CLI_NOTE].filter(Boolean);
+          return out(context(event, notes.join('\n')));
         }
         if (input.source === 'compact' || input.source === 'resume') {
           log(root, { event, guard: 'pointer', decision: 'inject', agent_type: input.agent_type, source: input.source });
-          return out(context(event, pointer(loadConfig(root), input.agent_type)));
+          return out(context(event, `${pointer(loadConfig(root), input.agent_type)}\n${CLI_NOTE}`));
         }
         return;
       default: return; // Stop, SubagentStop and anything else: never act

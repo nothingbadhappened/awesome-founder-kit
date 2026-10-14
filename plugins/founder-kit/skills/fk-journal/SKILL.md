@@ -1,6 +1,6 @@
 ---
 name: fk-journal
-description: Use at the end of every task or session, after a notable problem or fix, and when a tool or practice proves its worth or fails, to log how the project is built with AI.
+description: "Use at the end of each task or session, or after a notable problem, fix or tool verdict: log how the project is built."
 ---
 
 # Process Journal

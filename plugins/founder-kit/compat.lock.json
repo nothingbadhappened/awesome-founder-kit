@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "checked": "2026-10-14",
+  "note": "The only list of versions the kit trusts. install/install.ps1, install/install.sh and `fk setup` install exactly these; tests/setup.test.mjs fails when a script drifts from this file. min = below this is red; version = the tested pin (older but >= min is yellow, newer is kept). exact = both install scripts install exactly this version (or commit); git, node and gh come from the OS package manager at its current release, checked against min.",
+  "tools": {
+    "git": {
+      "min": "2.30.0",
+      "version": "2.55.0",
+      "source": "winget Git.Git | xcode-select / brew | apt / dnf"
+    },
+    "node": {
+      "min": "20.0.0",
+      "version": "24.21.0",
+      "source": "winget OpenJS.NodeJS.LTS | nodejs.org/dist tarball into ~/.local"
+    },
+    "uv": {
+      "min": "0.5.0",
+      "version": "0.13.0",
+      "source": "https://astral.sh/uv/0.13.0/install.(sh|ps1)",
+      "exact": true
+    },
+    "claude-code": {
+      "min": "2.1.0",
+      "version": "2.1.296",
+      "source": "https://claude.ai/install.(sh|ps1) <version>",
+      "exact": true
+    },
+    "gh": {
+      "optional": true,
+      "min": "2.40.0",
+      "version": "2.102.0",
+      "source": "winget GitHub.cli | brew gh"
+    },
+    "oh-my-claudecode": {
+      "version": "5.7.2",
+      "floor_policy": "latest published major - 1 (hooks/lib.mjs omcStatus)",
+      "marketplace": "Yeachan-Heo/oh-my-claudecode",
+      "plugin": "oh-my-claudecode@omc",
+      "npm_package": "oh-my-claude-sisyphus"
+    },
+    "codebase-memory-mcp": {
+      "min": "0.9.0",
+      "version": "0.11.0",
+      "repo": "DeusData/codebase-memory-mcp",
+      "config": {
+        "auto_index": "false",
+        "auto_watch": "false"
+      },
+      "exact": true
+    },
+    "mempalace": {
+      "min": "3.10.0",
+      "version": "3.10.0",
+      "marketplace": "MemPalace/mempalace",
+      "plugin": "mempalace@mempalace",
+      "backend": "sqlite_exact",
+      "hooks": {
+        "silent_save": true
+      },
+      "exact": true
+    },
+    "skillspector": {
+      "min": "2.11.0",
+      "version": "2.12.0",
+      "repo": "NVIDIA/skillspector",
+      "commit": "b07f181d9138878c3827de0947a9fd2c6a84a66c",
+      "python": "3.12",
+      "exact": true
+    },
+    "gitleaks": {
+      "min": "8.19.0",
+      "version": "8.30.1",
+      "repo": "gitleaks/gitleaks",
+      "exact": true
+    },
+    "founder-kit": {
+      "version": "0.4.0",
+      "marketplace": "nothingbadhappened/awesome-founder-kit",
+      "plugin": "founder-kit@awesome-founder-kit"
+    }
+  }
+}

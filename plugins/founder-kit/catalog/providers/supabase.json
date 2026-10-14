@@ -1,0 +1,41 @@
+{
+  "provider": "supabase",
+  "name": "Supabase",
+  "spend_model": "usage",
+  "hard_cap": "partial",
+  "how_to_set": [
+    "Organization > Billing > Cost control: keep \"Spend cap\" ON (the default on Pro).",
+    "Count compute separately: each project adds compute hours that the spend cap does not cover."
+  ],
+  "kill_switch": "With the spend cap on, usage beyond the quota is restricted instead of billed; pause a project to stop its compute.",
+  "traps": [
+    "Spend cap does not cover compute, read replicas, branching compute, IPv4, PITR, custom domain, log drains, extra disk IOPS/throughput, phone MFA",
+    "Each extra project adds compute",
+    "Free projects pause after a week of inactivity",
+    "It is a switch, not a dollar amount"
+  ],
+  "billing_safety_score": 7,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://supabase.com/docs/guides/platform/cost-control",
+    "https://supabase.com/docs/guides/platform/manage-your-usage/compute"
+  ],
+  "unverified": [],
+  "signup": "https://supabase.com/dashboard/sign-up",
+  "billing_url": "https://supabase.com/dashboard/org/_/billing",
+  "readback": null,
+  "detect": {
+    "files": [
+      "supabase/config.toml"
+    ],
+    "deps": [
+      "@supabase/supabase-js",
+      "supabase"
+    ]
+  },
+  "env_keys": [
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "FkDenyNewSpend",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:StartInstances",
+        "ec2:CreateNatGateway",
+        "ec2:AllocateAddress",
+        "rds:CreateDBInstance",
+        "rds:StartDBInstance",
+        "lambda:CreateFunction",
+        "lambda:PutProvisionedConcurrencyConfig",
+        "ecs:CreateService",
+        "ecs:UpdateService",
+        "eks:CreateNodegroup",
+        "sagemaker:CreateEndpoint",
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

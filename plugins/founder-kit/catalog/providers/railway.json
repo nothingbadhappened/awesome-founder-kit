@@ -1,0 +1,37 @@
+{
+  "provider": "railway",
+  "name": "Railway",
+  "spend_model": "usage",
+  "hard_cap": "yes",
+  "how_to_set": [
+    "Workspace > Usage > Usage limits: set a custom email alert (soft limit) and a hard limit (minimum $10).",
+    "At the hard limit all workloads go offline; raise or remove the limit and redeploy to restart."
+  ],
+  "kill_switch": "Hard limit takes all workloads offline; data in volumes and buckets is kept.",
+  "traps": [
+    "Services do not come back on their own after the cycle resets",
+    "Limit counter has drifted from real usage in reported incidents",
+    "Replicas and always-on services multiply cost",
+    "Egress"
+  ],
+  "billing_safety_score": 8,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://docs.railway.com/reference/usage-limits",
+    "https://docs.railway.com/pricing/cost-control"
+  ],
+  "unverified": [],
+  "signup": "https://railway.com/login",
+  "billing_url": "https://railway.com/workspace/usage",
+  "readback": null,
+  "detect": {
+    "files": [
+      "railway.json",
+      "railway.toml"
+    ],
+    "deps": []
+  },
+  "env_keys": [
+    "RAILWAY_TOKEN"
+  ]
+}

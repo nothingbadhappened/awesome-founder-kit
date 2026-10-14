@@ -1,0 +1,14 @@
+{
+  "name": "fk-practice-web",
+  "version": "0.1.0",
+  "description": "Web stack practices: Node backend and frontend patterns, React, React testing, Playwright E2E, Postgres, Prisma, Redis, Docker, database migrations.",
+  "author": {
+    "name": "Founder Kit maintainers"
+  },
+  "license": "MIT",
+  "keywords": [
+    "founder-kit",
+    "practice-pack",
+    "web"
+  ]
+}

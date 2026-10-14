@@ -1,0 +1,43 @@
+{
+  "provider": "netlify",
+  "name": "Netlify",
+  "spend_model": "usage",
+  "hard_cap": "yes",
+  "how_to_set": [
+    "Use a credit-based plan; Team settings > Billing: keep Auto recharge OFF (it is off by default).",
+    "When credits run out, projects pause until the next cycle; that is the hard cap.",
+    "Set usage notifications in the billing page."
+  ],
+  "kill_switch": "Out of credits: all team projects pause (traffic, forms and deploys blocked) until the next cycle or a top-up.",
+  "traps": [
+    "Auto recharge turns the cap into a pay-as-you-go bill",
+    "Pausing takes the whole team offline, not one project",
+    "Legacy (non-credit) plans auto-add bandwidth packs"
+  ],
+  "billing_safety_score": 8,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/",
+    "https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/configure-auto-recharge",
+    "https://docs.netlify.com/manage/accounts-and-billing/billing/resume-paused-projects/"
+  ],
+  "unverified": [
+    "Current auto-recharge credit pack prices differ between Netlify pages"
+  ],
+  "signup": "https://app.netlify.com/signup",
+  "billing_url": "https://app.netlify.com/teams/",
+  "readback": null,
+  "detect": {
+    "files": [
+      "netlify.toml"
+    ],
+    "deps": [
+      "netlify-cli",
+      "@netlify/functions"
+    ]
+  },
+  "env_keys": [
+    "NETLIFY_AUTH_TOKEN",
+    "NETLIFY_SITE_ID"
+  ]
+}

@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+# Founder Kit installer for macOS and Linux.
+#
+#   curl -fsSL https://raw.githubusercontent.com/nothingbadhappened/awesome-founder-kit/main/install/install.sh | bash
+#
+# Options (after `bash -s --` when piped): --yes (no question, for CI)  --dry-run (print the commands only)  --with-gh
+#
+# Checks every base tool, prints one plan, asks once, installs what is missing (into your home folder where the
+# tool allows), configures, verifies, then adds the founder-kit plugin. Re-running is safe: present tools are left
+# alone, nothing is uninstalled or downgraded. Every change is logged to ~/.fk/install-ledger.jsonl with an undo hint.
+# Versions mirror plugins/founder-kit/compat.lock.json (a test fails when they drift).
+set -u
+
+YES=0; DRY=0; WITH_GH=0
+for a in "$@"; do
+  case "$a" in
+    --yes|-y) YES=1 ;;
+    --dry-run) DRY=1 ;;
+    --with-gh) WITH_GH=1 ;;
+    *) echo "usage: install.sh [--yes] [--dry-run] [--with-gh]"; exit 2 ;;
+  esac
+done
+[ "${FK_YES:-}" = 1 ] && YES=1
+[ "${FK_DRY_RUN:-}" = 1 ] && DRY=1
+
+# ---- pins (compat.lock.json, checked 2026-10-14) ----
+LOCK_CHECKED=2026-10-14
+NODE_VERSION=24.21.0
+UV_VERSION=0.13.0
+CLAUDE_VERSION=2.1.296
+CBM_VERSION=0.11.0
+MEMPALACE_VERSION=3.10.0
+SKILLSPECTOR_COMMIT=b07f181d9138878c3827de0947a9fd2c6a84a66c
+SKILLSPECTOR_PYTHON=3.12
+GITLEAKS_VERSION=8.30.1
+OMC_VERSION=5.7.2
+min_of() {
+  case "$1" in
+    git) echo 2.30.0 ;; node) echo 20.0.0 ;; uv) echo 0.5.0 ;; claude-code) echo 2.1.0 ;; gh) echo 2.40.0 ;;
+    codebase-memory-mcp) echo 0.9.0 ;; mempalace) echo 3.10.0 ;; skillspector) echo 2.11.0 ;; gitleaks) echo 8.19.0 ;; *) echo "" ;;
+  esac
+}
+pin_of() {
+  case "$1" in
+    node) echo "$NODE_VERSION" ;; uv) echo "$UV_VERSION" ;; claude-code) echo "$CLAUDE_VERSION" ;; codebase-memory-mcp) echo "$CBM_VERSION" ;;
+    mempalace) echo "$MEMPALACE_VERSION" ;; skillspector) echo "$SKILLSPECTOR_COMMIT" ;; gitleaks) echo "$GITLEAKS_VERSION" ;;
+    oh-my-claudecode) echo "$OMC_VERSION" ;; *) echo "" ;;
+  esac
+}
+OMC_MARKETPLACE=Yeachan-Heo/oh-my-claudecode;    OMC_PLUGIN=oh-my-claudecode@omc
+MP_MARKETPLACE=MemPalace/mempalace;               MP_PLUGIN=mempalace@mempalace
+FK_MARKETPLACE=nothingbadhappened/awesome-founder-kit; FK_PLUGIN=founder-kit@awesome-founder-kit
+CBM_RAW=https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/v$CBM_VERSION
+CBM_BASE=https://github.com/DeusData/codebase-memory-mcp/releases/download/v$CBM_VERSION
+ARCH='OS=$(uname -s | tr A-Z a-z); A=$(uname -m); case "$A" in x86_64|amd64) A=x64;; aarch64|arm64) A=arm64;; esac'
+
+FK_HOME="${FK_HOME:-$HOME/.fk}"
+LEDGER="$FK_HOME/install-ledger.jsonl"
+STATUS_FILE="$FK_HOME/base-tools.json"
+PALACE_HOME="$FK_HOME/palace-home"
+PLUGINS="$HOME/.claude/plugins"
+case "$(uname -s)" in Darwin) OSN=mac ;; *) OSN=linux ;; esac
+
+if [ -t 1 ]; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; C=$'\033[36m'; D=$'\033[2m'; N=$'\033[0m'; else G= Y= R= C= D= N=; fi
+
+refresh_path() {
+  for d in "$HOME/.local/bin" /opt/homebrew/bin /usr/local/bin; do
+    case ":$PATH:" in *":$d:"*) ;; *) [ -d "$d" ] && PATH="$d:$PATH" ;; esac
+  done
+  export PATH
+}
+has() { command -v "$1" >/dev/null 2>&1; }
+ver() { # ver <bin> [args...] -> x.y.z or empty
+  has "$1" || return 0
+  "$@" 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1
+}
+at_least() { # at_least <have> <min>
+  [ "$(printf '%s\n%s\n' "$2" "$1" | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)" = "$2" ]
+}
+plugin_installed() { grep -q "\"$1@" "$PLUGINS/installed_plugins.json" 2>/dev/null; }
+marketplace_added() { grep -qi "\"repo\": *\"$1\"" "$PLUGINS/known_marketplaces.json" 2>/dev/null; }
+json_esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# Plan rows: parallel arrays. Steps: "id<TAB>action<TAB>cmd<TAB>rollback" lines.
+IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); STEPS=""
+row() { IDS+=("$1"); LABELS+=("$2"); SIZES+=("$3"); WHYS+=("$4"); VERSIONS+=("$5"); LEVELS+=(green); REASONS+=(ok); NOTES+=(""); }
+last() { echo $(( ${#IDS[@]} - 1 )); }
+set_red() { local i; i=$(last); LEVELS[$i]=red; REASONS[$i]="$1"; NOTES[$i]="$2"; }
+step() { STEPS="$STEPS$1	$2	$3	$4
+"; }
+grade() { # grade <id> <install-cmd> <rollback>
+  local i v m; i=$(last); v="${VERSIONS[$i]}"; m=$(min_of "$1")
+  if [ -z "$v" ]; then set_red missing "not installed"; step "$1" install "$2" "$3"
+  elif [ -n "$m" ] && ! at_least "$v" "$m"; then set_red below-floor "older than the minimum $m"; step "$1" upgrade "$2" "$3"; fi
+}
+plugin_steps() { # plugin_steps <id> <marketplace repo> <plugin> <marketplace name>
+  marketplace_added "$2" || step "$1" install "claude plugin marketplace add $2" "claude plugin marketplace remove $4"
+  plugin_installed "${3%@*}" || step "$1" install "claude plugin install $3" "claude plugin uninstall $3"
+}
+mempalace_dir() {
+  if [ -n "${MEMPALACE_CONFIG_DIR:-}" ]; then echo "$MEMPALACE_CONFIG_DIR"; return; fi
+  for f in config.json people_map.json palace/chroma.sqlite3; do [ -e "$HOME/.mempalace/$f" ] && { echo "$HOME/.mempalace"; return; }; done
+  case "${XDG_CONFIG_HOME:-}" in /*) echo "$XDG_CONFIG_HOME/mempalace"; return ;; esac
+  echo "$HOME/.config/mempalace"
+}
+
+state() {
+  IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); STEPS=""
+  local i cmd
+
+  row git git "about 300 MB" "keeps every version of your project, so nothing is ever lost" "$(ver git --version)"
+  if [ "$OSN" = mac ]; then
+    if has brew; then grade git "brew install git" "brew uninstall git"; else grade git "xcode-select --install" "leave in place (Apple developer tools)"; fi
+  elif has apt-get; then grade git "sudo apt-get update && sudo apt-get install -y git" "sudo apt-get remove git"
+  elif has dnf; then grade git "sudo dnf install -y git" "sudo dnf remove git"
+  else grade git "echo 'Install git with your system package manager' && exit 1" "-"; fi
+
+  row node Node.js "about 100 MB" "runs the kit's safety checks" "$(ver node --version)"
+  grade node "set -e; V=$NODE_VERSION; $ARCH; D=\"\$HOME/.local/share/fk/node-v\$V\"; mkdir -p \"\$D\" \"\$HOME/.local/bin\"; curl -fsSL \"https://nodejs.org/dist/v\$V/node-v\$V-\$OS-\$A.tar.gz\" | tar -xz -C \"\$D\" --strip-components=1; for b in node npm npx; do ln -sf \"\$D/bin/\$b\" \"\$HOME/.local/bin/\$b\"; done" \
+    "rm -rf ~/.local/share/fk/node-v$NODE_VERSION ~/.local/bin/node ~/.local/bin/npm ~/.local/bin/npx"
+
+  row uv uv "about 40 MB" "installs the Python helpers below, each in its own sealed box" "$(ver uv --version)"
+  grade uv "curl -LsSf https://astral.sh/uv/$UV_VERSION/install.sh | sh" "rm ~/.local/bin/uv ~/.local/bin/uvx"
+
+  row claude-code "Claude Code" "about 200 MB" "the AI assistant the kit runs inside" "$(ver claude --version)"
+  grade claude-code "curl -fsSL https://claude.ai/install.sh | bash -s $CLAUDE_VERSION" "rm ~/.local/bin/claude"
+
+  row gh "GitHub CLI (optional)" "about 40 MB" "lets Claude publish your project to GitHub" "$(ver gh --version)"
+  i=$(last)
+  if [ -z "${VERSIONS[$i]}" ]; then
+    LEVELS[$i]=yellow; REASONS[$i]=optional
+    if [ "$WITH_GH" = 1 ] && has brew; then NOTES[$i]="not installed"; step gh install "brew install gh" "brew uninstall gh"
+    elif [ "$WITH_GH" = 1 ]; then NOTES[$i]="not installed; see https://cli.github.com"
+    else NOTES[$i]="not installed (optional; re-run with --with-gh to add it)"; fi
+  fi
+
+  row oh-my-claudecode oh-my-claudecode "about 20 MB" "the agent team and workflow the kit builds on" ""
+  i=$(last)
+  if plugin_installed oh-my-claudecode; then
+    VERSIONS[$i]=$( (has node && node -e "const j=require(process.argv[1]);const k=Object.keys(j.plugins).find(k=>k.startsWith('oh-my-claudecode@'));const e=[].concat(j.plugins[k])[0]||{};let v=e.version;try{v=require(require('path').join(e.installPath,'.claude-plugin','plugin.json')).version||v}catch{}console.log(v||'')" "$PLUGINS/installed_plugins.json") 2>/dev/null)
+    local latest floor
+    latest=${FK_OMC_LATEST:-}
+    [ -n "$latest" ] || latest=$(curl -fsS --max-time 5 https://registry.npmjs.org/oh-my-claude-sisyphus/latest 2>/dev/null | grep -Eo '"version":"[0-9.]+"' | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+    latest=${latest:-$OMC_VERSION}
+    floor="$(( ${latest%%.*} > 0 ? ${latest%%.*} - 1 : 0 )).0.0"
+    if [ -n "${VERSIONS[$i]}" ] && ! at_least "${VERSIONS[$i]}" "$floor"; then
+      set_red below-floor "below the supported floor $floor"
+      step oh-my-claudecode upgrade "claude plugin marketplace update omc" "-"
+      step oh-my-claudecode upgrade "claude plugin update $OMC_PLUGIN" "reinstall the previous version from /plugin"
+    fi
+  else
+    # npm mode is supported; adding the plugin copy too would fire OMC's hooks twice, so it is never added here.
+    VERSIONS[$i]=$(ver omc --version)
+    if [ -z "${VERSIONS[$i]}" ]; then set_red missing "not installed"; plugin_steps oh-my-claudecode "$OMC_MARKETPLACE" "$OMC_PLUGIN" omc
+    elif at_least "${VERSIONS[$i]}" "$(( ${OMC_VERSION%%.*} - 1 )).0.0"; then LEVELS[$i]=yellow; REASONS[$i]=npm; NOTES[$i]="npm install: supported; plugin mode optional"
+    else set_red below-floor "npm install below the supported floor"; step oh-my-claudecode upgrade "npm i -g oh-my-claude-sisyphus@$OMC_VERSION" "npm i -g <the previous version>"; fi
+  fi
+
+  row codebase-memory-mcp codebase-memory "about 40 MB" "gives Claude a map of your code so it reads less and costs less" "$(ver codebase-memory-mcp --version)"
+  grade codebase-memory-mcp "curl -fsSL $CBM_RAW/install.sh | CBM_DOWNLOAD_URL=$CBM_BASE bash" "codebase-memory-mcp uninstall -y"
+  i=$(last)
+  for key in auto_index auto_watch; do
+    local have=""
+    [ -n "${VERSIONS[$i]}" ] && have=$(codebase-memory-mcp config get "$key" 2>/dev/null | tr -d '[:space:]')
+    [ -n "${VERSIONS[$i]}" ] && [ "$have" = false ] && continue
+    step codebase-memory-mcp configure "codebase-memory-mcp config set $key false" "codebase-memory-mcp config set $key true"
+    if [ -n "${VERSIONS[$i]}" ] && [ "${LEVELS[$i]}" != red ]; then set_red not-configured "$key is $have; the kit keeps it false so indexing runs only when asked"; fi
+  done
+
+  row mempalace MemPalace "about 500 MB" "remembers decisions between sessions, on your machine only" "$(ver mempalace --version)"
+  grade mempalace "uv tool install mempalace==$MEMPALACE_VERSION" "uv tool uninstall mempalace"
+  i=$(last)
+  if ! plugin_installed mempalace || ! marketplace_added "$MP_MARKETPLACE"; then
+    plugin_steps mempalace "$MP_MARKETPLACE" "$MP_PLUGIN" mempalace
+    [ "${LEVELS[$i]}" != red ] && set_red plugin-missing "the Claude Code plugin is not installed"
+  fi
+  local mdir cfg palace notes=""
+  mdir=$(mempalace_dir); cfg="$mdir/config.json"; palace="$mdir/palace"
+  if [ -f "$cfg" ] && grep -q '"palace_path"' "$cfg"; then palace=$(grep -Eo '"palace_path": *"[^"]*"' "$cfg" | sed 's/.*: *"//; s/"$//'); fi
+  if [ ! -e "$palace" ]; then
+    step mempalace configure "mkdir -p '$PALACE_HOME' && mempalace init --yes --no-llm --backend sqlite_exact '$PALACE_HOME'" \
+      "delete the palace folder MemPalace reports in \`mempalace status\` and the backend line in its config.json"
+    [ "${LEVELS[$i]}" != red ] && set_red not-configured "no palace yet"
+  elif ! grep -q '"backend": *"sqlite_exact"' "$cfg" 2>/dev/null; then
+    notes="your existing palace keeps its current backend (switching needs a migration)"
+  fi
+  if grep -q '"silent_save": *false' "$cfg" 2>/dev/null; then notes="${notes:+$notes; }hooks.silent_save is off (your choice; kept)"
+  elif ! grep -q '"silent_save"' "$cfg" 2>/dev/null; then
+    step mempalace configure "node -e 'const f=process.argv[1],fs=require(\"fs\");let c={};try{c=JSON.parse(fs.readFileSync(f,\"utf8\"))}catch{}c.hooks=c.hooks||{};if(c.hooks.silent_save===undefined){c.hooks.silent_save=true;fs.mkdirSync(require(\"path\").dirname(f),{recursive:true});fs.writeFileSync(f,JSON.stringify(c,null,2))}' '$cfg'" \
+      "remove hooks.silent_save from $cfg"
+  fi
+  [ -n "${MEMPAL_DIR:-}" ] && notes="${notes:+$notes; }MEMPAL_DIR is set, so MemPalace mines that folder on every save; the kit recommends unsetting it"
+  if [ -n "$notes" ]; then [ "${LEVELS[$i]}" = green ] && LEVELS[$i]=yellow; NOTES[$i]="${NOTES[$i]:+${NOTES[$i]}; }$notes"; fi
+
+  row skillspector SkillSpector "about 150 MB" "scans add-ons for malicious instructions before they are used" "$(ver skillspector --version)"
+  i=$(last); local re=""; [ -n "${VERSIONS[$i]}" ] && re=" --reinstall"
+  grade skillspector "uv tool install --python $SKILLSPECTOR_PYTHON git+https://github.com/NVIDIA/skillspector.git@$SKILLSPECTOR_COMMIT$re" "uv tool uninstall skillspector"
+
+  row gitleaks gitleaks "about 20 MB" "stops passwords and keys from being saved into your project" "$(ver gitleaks version)"
+  if [ "$OSN" = mac ] && has brew; then grade gitleaks "brew install gitleaks" "brew uninstall gitleaks"
+  else grade gitleaks "set -e; V=$GITLEAKS_VERSION; $ARCH; mkdir -p \"\$HOME/.local/bin\"; curl -fsSL \"https://github.com/gitleaks/gitleaks/releases/download/v\$V/gitleaks_\"\$V\"_\"\$OS\"_\"\$A\".tar.gz\" | tar -xz -C \"\$HOME/.local/bin\" gitleaks" "rm ~/.local/bin/gitleaks"; fi
+
+  row founder-kit "Founder Kit plugin" "about 2 MB" "the founder layer itself" ""
+  if plugin_installed founder-kit; then VERSIONS[$(last)]=installed
+  else set_red missing "not installed"; plugin_steps founder-kit "$FK_MARKETPLACE" "$FK_PLUGIN" awesome-founder-kit; fi
+}
+
+show_table() {
+  local i col
+  for i in "${!IDS[@]}"; do
+    case "${LEVELS[$i]}" in green) col=$G ;; yellow) col=$Y ;; *) col=$R ;; esac
+    printf '  %s%-7s%s %-22s %s\n' "$col" "${LEVELS[$i]}" "$N" "${LABELS[$i]}" "$(printf '%s' "${VERSIONS[$i]}${VERSIONS[$i]:+${NOTES[$i]:+, }}${NOTES[$i]}")"
+  done
+}
+idx_of() { local i; for i in "${!IDS[@]}"; do [ "${IDS[$i]}" = "$1" ] && { echo "$i"; return; }; done; }
+write_ledger() { # tool action cmd rollback ok
+  mkdir -p "$FK_HOME"
+  printf '{"ts":"%s","via":"install.sh","tool":"%s","action":"%s","version":"%s","command":"%s","ok":%s,"rollback":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$(pin_of "$1")" "$(json_esc "$3")" "$5" "$(json_esc "$4")" >> "$LEDGER"
+}
+write_status() {
+  mkdir -p "$FK_HOME"
+  local i sep="" body=""
+  for i in "${!IDS[@]}"; do
+    body="$body$sep\"${IDS[$i]}\":{\"level\":\"${LEVELS[$i]}\",\"reason\":\"${REASONS[$i]}\",\"version\":\"$(json_esc "${VERSIONS[$i]}")\",\"min\":\"$(min_of "${IDS[$i]}")\",\"note\":\"$(json_esc "${NOTES[$i]}")\"}"
+    sep=","
+  done
+  printf '{"ts":"%s","checked_by":"install.sh","lock_checked":"%s","tools":{%s}}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$LOCK_CHECKED" "$body" > "$STATUS_FILE"
+}
+todo_ids() { printf '%s' "$STEPS" | cut -f1 | awk 'NF && !seen[$0]++'; }
+
+echo
+echo "${C}Founder Kit setup${N}"
+echo "Checking what is already on this computer ($(uname -s) $(uname -m))..."
+refresh_path
+state
+show_table
+
+if [ -z "$STEPS" ]; then
+  [ "$DRY" = 1 ] || write_status
+  echo; echo "${G}Everything is already in place.${N}"
+else
+  echo; echo "Plan (everything below is free and open source):"
+  n=0
+  for id in $(todo_ids); do
+    n=$((n + 1)); i=$(idx_of "$id")
+    case "${REASONS[$i]}" in missing) verb=Install ;; below-floor) verb=Update ;; plugin-missing) verb="Add the Claude Code plugin of" ;; *) verb="Set up" ;; esac
+    echo "  $n. $verb ${LABELS[$i]} (${SIZES[$i]}): ${WHYS[$i]}."
+    printf '%s' "$STEPS" | awk -F'\t' -v id="$id" -v d="$D" -v n="$N" '$1 == id { print "       " d "> " $3 n }'
+  done
+  echo "  Nothing is uninstalled or downgraded. Every change is logged with an undo hint in ~/.fk/install-ledger.jsonl."
+  printf '%s' "$STEPS" | grep -q 'sudo ' && echo "  Some steps use sudo: your computer password may be asked once."
+  if [ "$DRY" = 1 ]; then echo; echo "Dry run: nothing was changed."; exit 0; fi
+  if [ "$YES" != 1 ]; then
+    if [ -r /dev/tty ]; then printf 'Install and set up these now? [Y/n] '; read -r ans < /dev/tty || ans=n
+    else ans=n; echo "No terminal to ask in. Re-run with --yes to install."; fi
+    case "$ans" in [nN]*) write_status; echo "Nothing was installed. Run this again whenever you are ready."; exit 1 ;; esac
+  fi
+
+  failed=""
+  while IFS=$'\t' read -r id action cmd rollback; do
+    [ -n "$id" ] || continue
+    case " $failed " in *" $id "*) continue ;; esac
+    i=$(idx_of "$id"); echo; echo "${C}-> ${LABELS[$i]} ${N}${D}$action${N}"
+    if bash -c "$cmd" < /dev/null; then ok=true; else ok=false; failed="$failed $id"; echo "${R}   failed: $cmd${N}"; fi
+    refresh_path; hash -r
+    write_ledger "$id" "$action" "$cmd" "$rollback" "$ok"
+  done <<EOF
+$STEPS
+EOF
+  state
+  write_status
+  echo; echo "${C}Result${N}"
+  show_table
+fi
+
+# The user-level `fk` command (~/.local/bin/fk): the kit's own code writes it (fk setup --shim).
+if [ "$DRY" != 1 ] && has node && plugin_installed founder-kit; then
+  fk_path=$(node -e "const j=require(process.argv[1]);const e=[].concat(j.plugins['founder-kit@awesome-founder-kit']||[])[0]||{};console.log(e.installPath||'')" "$PLUGINS/installed_plugins.json" 2>/dev/null)
+  [ -n "$fk_path" ] && node "$fk_path/bin/fk.mjs" setup --shim
+fi
+
+red=""
+for i in "${!IDS[@]}"; do [ "${LEVELS[$i]}" = red ] && red="$red${red:+, }${LABELS[$i]}"; done
+echo
+if [ -z "$red" ]; then
+  echo "${G}All set.${N}"
+  echo "Next: open a new terminal, make an empty folder for your project, run \`claude\` inside it, and say:"
+  echo "      ${C}Start my project with fk-start${N}"
+  echo "Once, inside Claude Code, also run /oh-my-claudecode:omc-setup if you have not before."
+  exit 0
+fi
+[ "$DRY" = 1 ] && exit 0
+echo "${R}Still red: $red.${N} Run this installer again, or open Claude Code and run: fk setup"
+exit 1

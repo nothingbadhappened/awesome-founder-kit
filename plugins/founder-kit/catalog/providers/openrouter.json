@@ -1,0 +1,34 @@
+{
+  "provider": "openrouter",
+  "name": "OpenRouter",
+  "spend_model": "usage",
+  "hard_cap": "yes",
+  "how_to_set": [
+    "Prepaid credits with auto top-up OFF.",
+    "Settings > Keys: one key per app and environment, each with a credit limit."
+  ],
+  "kill_switch": "Key credit limit returns 402 when used up; disable or delete the key to stop at once.",
+  "traps": [
+    "Keys without a limit can spend the whole balance",
+    "Auto top-up",
+    "A negative balance blocks even free models"
+  ],
+  "billing_safety_score": 9,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://openrouter.ai/docs/api-reference/limits"
+  ],
+  "unverified": [],
+  "signup": "https://openrouter.ai/",
+  "billing_url": "https://openrouter.ai/settings/credits",
+  "readback": "GET https://openrouter.ai/api/v1/key (limit)",
+  "detect": {
+    "files": [],
+    "deps": [
+      "@openrouter/ai-sdk-provider"
+    ]
+  },
+  "env_keys": [
+    "OPENROUTER_API_KEY"
+  ]
+}

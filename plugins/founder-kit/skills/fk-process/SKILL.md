@@ -1,6 +1,6 @@
 ---
 name: fk-process
-description: Use after fk-kickoff, or to retrofit an existing repo, to write the project's standards into drydock's docs/standards/ and generate a thin `<project>-dev` skill over the OMC workflow.
+description: "Use after fk-kickoff or to retrofit a repo: write docs/standards/ and generate a thin <project>-dev skill over OMC's workflow."
 ---
 
 # Project Dev Process (generator)

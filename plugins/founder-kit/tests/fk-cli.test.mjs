@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { CASES, runHook, outcome } from '../hooks/selftest.mjs';
+import { CASES, CLEAN_TWINS, runHook, outcome } from '../hooks/selftest.mjs';
+import { stateFile, stateDir } from '../hooks/lib.mjs';
 
 const FK = path.join(import.meta.dirname, '..', 'bin', 'fk.mjs');
 const fk = (cwd, ...args) => spawnSync(process.execPath, [FK, ...args], { cwd, encoding: 'utf8' });
@@ -30,12 +31,14 @@ test('fk init, audit and uninstall round-trip; .omc and docs untouched', () => {
     fs.writeFileSync(path.join(dir, 'docs', 'a.md'), '# a');
     const r = fk(dir, 'init');
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    for (const f of ['config.json', 'toolchain.json', 'budgets.json', 'snapshots.json']) assert.ok(fs.existsSync(path.join(dir, '.fk', f)), f);
+    for (const f of ['config.json', 'toolchain.json', 'budgets.json']) assert.ok(fs.existsSync(path.join(dir, '.fk', f)), f);
+    assert.ok(fs.existsSync(stateFile(dir, 'snapshots.json')), 'snapshot outside the repo');
+    assert.equal(fs.existsSync(path.join(dir, '.fk', 'snapshots.json')), false);
     assert.ok(fs.existsSync(path.join(dir, '.githooks', 'pre-commit')));
     assert.match(git(dir, 'ls-files', '-s', '.githooks/pre-commit').stdout, /^100755 /, 'exec bit in the index (Windows too)');
     assert.equal(git(dir, 'config', '--get', 'core.hooksPath').stdout.trim(), '.githooks');
 
-    fs.writeFileSync(path.join(dir, '.fk', 'compliance.jsonl'),
+    fs.writeFileSync(stateFile(dir, 'compliance.jsonl'),
       JSON.stringify({ ts: new Date().toISOString(), event: 'PreToolUse', guard: 'secret-guard', decision: 'deny', tool: 'Bash', reason: 'fk secret-guard: test' }) + '\n'
       + JSON.stringify({ ts: new Date().toISOString(), event: 'PreToolUse', guard: 'install-guard', decision: 'would-deny', tool: 'Bash' }) + '\n');
     const a = fk(dir, 'audit');
@@ -46,10 +49,47 @@ test('fk init, audit and uninstall round-trip; .omc and docs untouched', () => {
     const u = fk(dir, 'uninstall');
     assert.equal(u.status, 0);
     assert.equal(fs.existsSync(path.join(dir, '.fk')), false);
+    assert.equal(fs.existsSync(stateDir(dir)), false, 'kit state removed too');
     assert.equal(fs.existsSync(path.join(dir, '.githooks')), false);
     assert.equal(git(dir, 'config', '--get', 'core.hooksPath').stdout.trim(), '');
     assert.ok(fs.existsSync(path.join(dir, '.omc', 'state.json')));
     assert.ok(fs.existsSync(path.join(dir, 'docs', 'a.md')));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('fk init leaves the index alone when the repo has uncommitted changes (adoption)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-cli-'));
+  try {
+    git(dir, 'init', '-q');
+    fs.writeFileSync(path.join(dir, 'a.js'), '1');
+    git(dir, 'add', 'a.js');
+    git(dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'init');
+    fs.writeFileSync(path.join(dir, 'a.js'), '2'); // work in progress
+    const r = fk(dir, 'init');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(fs.existsSync(path.join(dir, '.githooks', 'pre-commit')));
+    assert.equal(git(dir, 'ls-files', '.githooks/pre-commit').stdout.trim(), '', 'not staged');
+    assert.match(r.stdout, /git add --chmod=\+x \.githooks\/pre-commit/);
+  } finally { fs.rmSync(stateDir(dir), { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('fk audit names overrides and approvals no founder-typed line recorded', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-cli-'));
+  try {
+    git(dir, 'init', '-q');
+    fk(dir, 'init');
+    runHook(dir, 'UserPromptSubmit', { session_id: 'S1', prompt: 'fk-approve tool biome@1.9.4 formatter' });
+    runHook(dir, 'UserPromptSubmit', { session_id: 'S1', prompt: 'fk-override gate-guard migrate' });
+    assert.doesNotMatch(fk(dir, 'audit').stdout, /NOT typed/);
+    const tc = path.join(dir, '.fk', 'toolchain.json');
+    fs.writeFileSync(tc, JSON.stringify({ ...JSON.parse(fs.readFileSync(tc, 'utf8')), approved: ['biome@1.9.4', 'evil@1.0.0'] }));
+    const ov = JSON.parse(fs.readFileSync(stateFile(dir, 'overrides.json'), 'utf8'));
+    ov.overrides.push({ ...ov.overrides[0], guard: 'install-guard', reason: 'forged' });
+    fs.writeFileSync(stateFile(dir, 'overrides.json'), JSON.stringify(ov));
+    const a = fk(dir, 'audit').stdout;
+    assert.match(a, /NOT typed by you, review: override of install-guard \(forged\); tool evil@1\.0\.0\./);
+    assert.doesNotMatch(a, /biome|gate-guard \(/);
+    fk(dir, 'uninstall');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -75,7 +115,9 @@ test('fk doctor --hooks prints a green planted-violation table', () => {
   assert.match(r.stdout, /planted: cat \.env/);
   const planted = r.stdout.split('\n').filter((l) => l.includes('planted:'));
   assert.equal(planted.length, CASES.length);
-  for (const l of planted) assert.match(l, /green/, l);
+  const clean = r.stdout.split('\n').filter((l) => l.includes('clean: '));
+  assert.equal(clean.length, CLEAN_TWINS.length);
+  for (const l of [...planted, ...clean]) assert.match(l, /green/, l);
 });
 
 const fakeBin = (dir, name, body) => {
@@ -118,7 +160,7 @@ function doctorOmc(version, latest) {
     fs.writeFileSync(path.join(install, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'oh-my-claudecode', version }));
     fs.mkdirSync(path.join(home, '.claude', 'plugins'), { recursive: true });
     fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'oh-my-claudecode@omc': [{ installPath: install, version }] } }));
-    const r = spawnSync(process.execPath, [FK, 'doctor'], { cwd: home, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home, FK_OMC_LATEST: latest } });
+    const r = spawnSync(process.execPath, [FK, 'doctor'], { cwd: home, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home, FK_HOME: path.join(home, '.fk'), FK_OMC_LATEST: latest } });
     return r.stdout.split('\n').find((l) => / oh-my-claudecode /.test(l)) || '';
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }

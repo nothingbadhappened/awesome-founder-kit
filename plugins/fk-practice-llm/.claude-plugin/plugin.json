@@ -1,0 +1,14 @@
+{
+  "name": "fk-practice-llm",
+  "version": "0.1.0",
+  "description": "LLM application practices: eval harness, cost-aware LLM pipelines, regression testing for AI-written code.",
+  "author": {
+    "name": "Founder Kit maintainers"
+  },
+  "license": "MIT",
+  "keywords": [
+    "founder-kit",
+    "practice-pack",
+    "llm"
+  ]
+}

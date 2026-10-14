@@ -1,0 +1,37 @@
+{
+  "provider": "openai",
+  "name": "OpenAI API",
+  "spend_model": "usage",
+  "hard_cap": "yes",
+  "how_to_set": [
+    "Use prepaid billing with auto recharge OFF (or a monthly recharge limit).",
+    "Create one project per app and environment; Project > Limits: set a hard spend limit (requests get 429 above it).",
+    "Organization > Limits: set an organization hard limit as the outer cap."
+  ],
+  "kill_switch": "Hard spend limit returns 429 for the project; revoke the project key to stop at once.",
+  "traps": [
+    "Spend alerts do not stop anything; only the hard limit does",
+    "Enforcement lags, so spend can pass the limit slightly",
+    "Auto recharge",
+    "One shared key across apps"
+  ],
+  "billing_safety_score": 8,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://developers.openai.com/api/docs/guides/spend-limits",
+    "https://help.openai.com/en/articles/8264644-what-is-prepaid-billing"
+  ],
+  "unverified": [],
+  "signup": "https://platform.openai.com/signup",
+  "billing_url": "https://platform.openai.com/settings/organization/billing",
+  "readback": null,
+  "detect": {
+    "files": [],
+    "deps": [
+      "openai"
+    ]
+  },
+  "env_keys": [
+    "OPENAI_API_KEY"
+  ]
+}

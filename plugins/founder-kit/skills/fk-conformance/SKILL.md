@@ -1,6 +1,6 @@
 ---
 name: fk-conformance
-description: Use when OMC code-reviewer or architect reviews a change or plan, to check it against the project's accepted ADRs and docs/standards and propose missing fitness gates.
+description: "Use when OMC reviewers check a change or plan: compare it with accepted ADRs and docs/standards; propose missing fitness gates."
 ---
 
 # Conformance lens

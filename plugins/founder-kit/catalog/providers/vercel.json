@@ -1,0 +1,43 @@
+{
+  "provider": "vercel",
+  "name": "Vercel",
+  "spend_model": "usage",
+  "hard_cap": "yes",
+  "how_to_set": [
+    "Hobby plan: usage limits are hard; projects pause when exceeded.",
+    "Pro: Team Settings > Billing > Spend Management: set the amount and turn on \"Pause all production deployments\", then confirm.",
+    "Add SMS or email notifications at 50/75/100%."
+  ],
+  "kill_switch": "Spend Management pauses production deployments for every project in the team (visitors get 503 DEPLOYMENT_PAUSED); resume each project by hand.",
+  "traps": [
+    "Pause is opt-in; without it Spend Management only notifies",
+    "Raising the limit does not resume paused projects",
+    "Function duration and image optimisation drive overage",
+    "AI Gateway and v0 usage may continue after the pause"
+  ],
+  "billing_safety_score": 8,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://vercel.com/docs/spend-management",
+    "https://vercel.com/docs/errors/DEPLOYMENT_PAUSED"
+  ],
+  "unverified": [
+    "AI Gateway and v0 usage continuing after the pause is from a third-party report"
+  ],
+  "signup": "https://vercel.com/signup",
+  "billing_url": "https://vercel.com/dashboard/settings/billing",
+  "readback": null,
+  "detect": {
+    "files": [
+      "vercel.json",
+      ".vercel/project.json"
+    ],
+    "deps": [
+      "vercel",
+      "@vercel/node"
+    ]
+  },
+  "env_keys": [
+    "VERCEL_TOKEN"
+  ]
+}

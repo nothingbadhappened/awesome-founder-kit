@@ -1,0 +1,37 @@
+{
+  "provider": "anthropic",
+  "name": "Anthropic API (Claude Console)",
+  "spend_model": "usage",
+  "hard_cap": "yes",
+  "how_to_set": [
+    "Prepaid credits with auto-reload OFF.",
+    "Create a workspace per app; Workspace > Limits > Change Limit: set a monthly spend limit (must be below the organization limit).",
+    "Add an email notification below the limit."
+  ],
+  "kill_switch": "Workspace spend limit rejects requests above it; archive the workspace key to stop at once.",
+  "traps": [
+    "Usage tier maximum is not your limit",
+    "Auto-reload",
+    "Using an API key for Claude Code instead of a subscription bills per token"
+  ],
+  "billing_safety_score": 9,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://support.claude.com/en/articles/9796807-creating-and-managing-workspaces-in-the-claude-console",
+    "https://docs.anthropic.com/en/api/rate-limits"
+  ],
+  "unverified": [],
+  "signup": "https://console.anthropic.com/",
+  "billing_url": "https://console.anthropic.com/settings/billing",
+  "readback": null,
+  "detect": {
+    "files": [],
+    "deps": [
+      "@anthropic-ai/sdk",
+      "anthropic"
+    ]
+  },
+  "env_keys": [
+    "ANTHROPIC_API_KEY"
+  ]
+}

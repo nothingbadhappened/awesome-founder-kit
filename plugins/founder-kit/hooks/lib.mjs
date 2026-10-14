@@ -3,11 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 
 export const GUARDS = ['secret-guard', 'gate-guard', 'install-guard', 'cloud-guard', 'git-guard'];
 export const FAIL_CLOSED = new Set(['secret-guard', 'gate-guard', 'install-guard']);
-// Files the hooks themselves write; never hashed, never writable by tools.
-export const HOOK_OWNED = new Set(['.fk/compliance.jsonl', '.fk/snapshots.json', '.fk/ledger.jsonl']);
+// .fk/.gitignore: kit-written files that never belong in a commit (hook state lives outside the repo, see stateDir).
+export const RUNTIME = ['ledger.jsonl', 'steward.json', 'adopt/', 'quarantine/'];
+// Files in .fk/ the kit itself writes; never hashed, never writable by tools.
+export const HOOK_OWNED = new Set(['.fk/ledger.jsonl']);
 const OVERRIDE_MS = 30 * 60 * 1000;
 
 export const DEFAULT_CONFIG = {
@@ -90,27 +93,63 @@ export function loadConfig(root) {
   return { ...DEFAULT_CONFIG, ...c, paths: { ...DEFAULT_CONFIG.paths, ...(c.paths || {}) } };
 }
 
+// ---- hook-owned state (snapshots, overrides, compliance log) lives outside the repo, in <home>/.fk/state/<root hash>/,
+// so nothing a tool does inside the project resets or forges it. FK_HOME moves <home>/.fk (tests).
+export const fkHome = () => process.env.FK_HOME || path.join(os.homedir(), '.fk');
+const STATE_FILES = ['snapshots.json', 'compliance.jsonl'];
+const stateDirs = new Map();
+export function stateDir(root) {
+  const key = `${fkHome()}|${root}`;
+  if (stateDirs.has(key)) return stateDirs.get(key);
+  let real = path.resolve(root);
+  try { real = fs.realpathSync.native(real); } catch { /* not there */ }
+  const dir = path.join(fkHome(), 'state', hash(process.platform === 'win32' ? real.toLowerCase() : real));
+  // First run after the move out of the repo: carry the old snapshot and log over. An in-repo override is dropped, never carried.
+  const old = path.join(root, '.fk');
+  if (!fs.existsSync(dir) && [...STATE_FILES, 'overrides.json'].some((f) => fs.existsSync(path.join(old, f)))) {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of STATE_FILES) { try { fs.copyFileSync(path.join(old, f), path.join(dir, f)); } catch { /* absent */ } }
+    for (const f of [...STATE_FILES, 'overrides.json']) fs.rmSync(path.join(old, f), { force: true });
+    // Old hashes kept line endings; a file that still matches its old hash gets the new (line-ending-blind) hash.
+    const snap = readJson(path.join(dir, 'snapshots.json'), null);
+    if (snap?.files) {
+      for (const [rel, h] of Object.entries(snap.files)) {
+        try { if (hash(gateText(rel, fs.readFileSync(path.join(root, rel), 'utf8'))) === h) snap.files[rel] = hashFile(root, rel); } catch { /* gone */ }
+      }
+      writeJson(path.join(dir, 'snapshots.json'), snap);
+    }
+  }
+  stateDirs.set(key, dir);
+  return dir;
+}
+export const stateFile = (root, name) => path.join(stateDir(root), name);
+
+// Fields every log line of this process carries (dispatch.mjs sets runtime: 'plugin' when it runs as the installed plugin).
+export const logContext = {};
 export function log(root, entry) {
   try {
-    fs.appendFileSync(path.join(root, '.fk', 'compliance.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n');
+    fs.mkdirSync(stateDir(root), { recursive: true });
+    fs.appendFileSync(stateFile(root, 'compliance.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...entry, ...logContext }) + '\n');
   } catch { /* logging must never break a hook */ }
 }
+export const readLog = (root) => {
+  try { return fs.readFileSync(stateFile(root, 'compliance.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); }
+  catch { return []; }
+};
 
-// ---- overrides (written only by UserPromptSubmit, i.e. typed by the human) ----
-const overridesFile = (root) => path.join(root, '.fk', 'overrides.json');
+// ---- overrides (written only by UserPromptSubmit, i.e. typed by the human; valid only in the session it was typed in) ----
+export const readOverrides = (root) => readJson(stateFile(root, 'overrides.json'), { overrides: [] }).overrides || [];
 
-export function activeOverride(root, guard, now = Date.now()) {
-  const list = readJson(overridesFile(root), { overrides: [] }).overrides || [];
-  return list.find((o) => o.guard === guard && Date.parse(o.expires) > now
+export function activeOverride(root, guard, session, now = Date.now()) {
+  return readOverrides(root).find((o) => o.guard === guard && !!o.session && o.session === session && Date.parse(o.expires) > now
     && Date.parse(o.expires) - Date.parse(o.ts) <= OVERRIDE_MS) || null;
 }
 
-export function addOverride(root, guard, reason, now = Date.now()) {
-  const list = (readJson(overridesFile(root), { overrides: [] }).overrides || []).filter((o) => Date.parse(o.expires) > now);
-  const o = { guard, reason, ts: new Date(now).toISOString(), expires: new Date(now + OVERRIDE_MS).toISOString() };
+export function addOverride(root, guard, reason, session, now = Date.now()) {
+  const list = readOverrides(root).filter((o) => Date.parse(o.expires) > now);
+  const o = { guard, reason, session, ts: new Date(now).toISOString(), expires: new Date(now + OVERRIDE_MS).toISOString() };
   list.push(o);
-  writeJson(overridesFile(root), { overrides: list });
-  refreshSnapshot(root, ['.fk/overrides.json']);
+  writeJson(stateFile(root, 'overrides.json'), { overrides: list });
   return o;
 }
 
@@ -148,21 +187,24 @@ export function protectedClass(root, rel) {
   return null;
 }
 
-// pyproject.toml is only a gate file for its [tool.*] sections.
+// pyproject.toml is only a gate file for its [tool.*] sections, minus the packaging tools (dependencies and build
+// settings are not gates).
+const PY_PACKAGING = /^tool\.(?:poetry|uv|pdm|hatch|setuptools|setuptools_scm|maturin|scikit-build|flit)(?:\.|$)/i;
 export function gateText(rel, text) {
   if (!/(^|\/)pyproject\.toml$/i.test(rel)) return text;
   let keep = false;
   return text.split(/\r?\n/).filter((l) => {
     const h = /^\s*\[\[?([^\]]+)\]/.exec(l);
-    if (h) keep = /^tool\./.test(h[1].trim());
+    if (h) { const name = h[1].trim().replace(/["']/g, ''); keep = /^tool\./.test(name) && !PY_PACKAGING.test(name); }
     return keep;
   }).join('\n');
 }
 
 const hash = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16);
 
+// Line-ending blind, so a git checkout with autocrlf restores trust.
 export function hashFile(root, rel) {
-  try { return hash(gateText(rel, fs.readFileSync(path.join(root, rel), 'utf8'))); } catch { return null; }
+  try { return hash(gateText(rel, fs.readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n'))); } catch { return null; }
 }
 
 export function listProtected(root) {
@@ -181,7 +223,7 @@ export function listProtected(root) {
   return out;
 }
 
-const snapFile = (root) => path.join(root, '.fk', 'snapshots.json');
+const snapFile = (root) => stateFile(root, 'snapshots.json');
 export const readSnapshot = (root) => readJson(snapFile(root), { files: {}, reported: null });
 
 export function takeSnapshot(root) {
@@ -189,6 +231,34 @@ export function takeSnapshot(root) {
   for (const rel of listProtected(root)) files[rel] = hashFile(root, rel);
   writeJson(snapFile(root), { files, reported: null });
   return files;
+}
+
+// The committed version's hash; '-' when it is not committed (kit runtime files, never committed, are not judged: null).
+function headHash(root, rel) {
+  const r = spawnSync('git', ['show', `HEAD:${rel}`], { cwd: root, encoding: 'utf8' });
+  if (r.status === 0) return hash(gateText(rel, r.stdout.replace(/\r\n/g, '\n')));
+  return RUNTIME.some((f) => rel === `.fk/${f}` || (f.endsWith('/') && rel.startsWith(`.fk/${f}`))) ? null : '-';
+}
+
+// SessionStart: a new baseline, except that a .fk JSON file changed behind the kit since the last snapshot keeps its old
+// hash (sanctionedJson keeps distrusting it; already reported, so PostToolUse stays quiet). No snapshot for this checkout
+// (a fresh clone, or the state dir was removed): only the last commit vouches. Each .fk JSON (and any the snapshot does
+// not know) is compared with `git show HEAD:<file>`; committed-and-identical is trusted, untracked or different stays
+// distrusted. Returns the files still distrusted.
+export function sessionSnapshot(root) {
+  const lost = !fs.existsSync(snapFile(root));
+  const prev = lost ? {} : readSnapshot(root).files || {};
+  const files = {};
+  const kept = [];
+  for (const rel of listProtected(root)) {
+    files[rel] = hashFile(root, rel);
+    if (!/^\.fk\/.+\.jsonc?$/i.test(rel)) continue;
+    const was = lost || !(rel in prev) ? headHash(root, rel) : prev[rel]; // not in the snapshot: only the commit vouches for it
+    if (was && was !== files[rel]) { kept.push(rel); files[rel] = was; }
+  }
+  const reported = kept.length ? kept.sort().map((r) => `${r}:${hashFile(root, r)}`).join('|') : null;
+  writeJson(snapFile(root), { files, reported });
+  return kept;
 }
 
 export function refreshSnapshot(root, rels) {
@@ -210,6 +280,42 @@ export function sanctionedJson(root, rel, fallback) {
   return fallback;
 }
 
+// PostToolUse: only files whose mtime/size moved are re-hashed (memo: path -> [mtimeMs, size, hash], in the state dir).
+// Finding new protected files: a small tree is walked (cheaper than starting git); once a walk takes longer than
+// WALK_MS, git status lists the changed and untracked files instead (gitignored files are then not seen).
+const memoFile = (root) => stateFile(root, 'hashmemo.json');
+const WALK_MS = 25;
+export function quickDiff(root) {
+  const snap = readSnapshot(root);
+  const saved = readJson(memoFile(root), {});
+  const memo = saved.files || {};
+  let walkMs = saved.walkMs ?? 0;
+  let listed;
+  if (walkMs < WALK_MS) {
+    const t0 = Date.now();
+    listed = listProtected(root);
+    walkMs = Date.now() - t0;
+  } else {
+    const r = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all', '--no-renames'], { cwd: root, encoding: 'utf8' });
+    listed = r.status === 0 ? r.stdout.split('\0').filter(Boolean).map((l) => l.slice(3)).filter((rel) => !HOOK_OWNED.has(rel) && protectedClass(root, rel))
+      : listProtected(root);
+  }
+  const next = {};
+  const hashOf = (rel) => {
+    let st;
+    try { st = fs.statSync(path.join(root, rel)); } catch { return null; }
+    const m = memo[rel];
+    const h = m && m[0] === st.mtimeMs && m[1] === st.size ? m[2] : hashFile(root, rel);
+    next[rel] = [st.mtimeMs, st.size, h];
+    return h;
+  };
+  const now = {};
+  for (const rel of new Set([...Object.keys(snap.files), ...listed])) { const h = hashOf(rel); if (h) now[rel] = h; }
+  try { writeJson(memoFile(root), { walkMs, files: next }); } catch { /* the memo is only a speed-up */ }
+  const changed = [...new Set([...Object.keys(snap.files), ...Object.keys(now)])].filter((rel) => snap.files[rel] !== now[rel]).sort();
+  return { snap, now, changed };
+}
+
 export function diffSnapshot(root) {
   const snap = readSnapshot(root);
   const now = {};
@@ -219,27 +325,42 @@ export function diffSnapshot(root) {
   return { snap, now, changed };
 }
 
+// ---- git hooks: .githooks/pre-commit runs only when core.hooksPath is .githooks, or when a foreign hooks dir
+// (husky, ...) chains it (fk init --chain). { hp, on } or null when the project has no .githooks/pre-commit.
+export const CHAIN_MARK = 'founder-kit pre-commit (fk init --chain)';
+export function hooksPathStatus(root) {
+  if (!fs.existsSync(path.join(root, '.githooks', 'pre-commit'))) return null;
+  const r = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: root, encoding: 'utf8' });
+  const hp = r.status === 0 ? r.stdout.trim() : '';
+  if (hp && path.resolve(root, hp) === path.resolve(root, '.githooks')) return { hp, on: true };
+  let chained = false;
+  if (hp) { try { chained = fs.readFileSync(path.join(path.resolve(root, hp), 'pre-commit'), 'utf8').includes(CHAIN_MARK); } catch { /* none */ } }
+  return { hp, on: chained };
+}
+
 // ---- small shell helpers for Bash/PowerShell guards ----
 export function segments(cmd) {
   return String(cmd).split(/&&|\|\||[;|\n]/).map((s) => s.trim()).filter(Boolean);
 }
 export function tokens(seg) {
   const out = [];
-  const re = /"((?:\\.|[^"\\])*)"|'([^']*)'|(\S+)/g;
+  // A quoted part stays glued to the text around it: "$PWD":/app is one word, as the shell sees it.
+  const re = /(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s"'])+/g;
   let m;
-  while ((m = re.exec(seg))) out.push(m[1] ?? m[2] ?? m[3]);
+  while ((m = re.exec(seg))) out.push(m[0].replace(/"((?:\\.|[^"\\])*)"|'([^']*)'/g, (_, a, b) => a ?? b));
   return out;
 }
 export const shellTool = (t) => t === 'Bash' || t === 'PowerShell';
 
 // ---- OMC version policy: supported floor = (latest major - 1).0.0; latest cached 24 h in ~/.fk/omc-latest.json ----
 const DAY = 24 * 60 * 60 * 1000;
-const omcCacheFile = () => path.join(os.homedir(), '.fk', 'omc-latest.json');
+const omcCacheFile = () => path.join(fkHome(), 'omc-latest.json');
 export const readOmcCache = () => readJson(omcCacheFile(), {});
 export const writeOmcCache = (patch) => writeJson(omcCacheFile(), { ...readOmcCache(), ...patch });
 export const OMC_UPDATE = {
   plugin: '/plugin marketplace update omc, then /plugin update oh-my-claudecode@omc',
-  npm: 'npm i -g oh-my-claude-sisyphus@latest, then omc setup',
+  // The install guard stops an agent's global install in a .fk project, so the founder runs it from the prompt.
+  npm: 'type `! npm i -g oh-my-claude-sisyphus@latest` in the Claude Code prompt yourself (the install guard stops an agent\'s global install), then `omc setup`',
 };
 
 export function cmpVer(a, b) {

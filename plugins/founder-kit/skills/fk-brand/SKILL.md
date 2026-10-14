@@ -1,6 +1,6 @@
 ---
 name: fk-brand
-description: Use after fk-kickoff for any product with a user interface, to create its brand and UX system in drydock's design-system/ plus a `<project>-design` skill.
+description: "Use after fk-kickoff for a product with a UI: brand and UX system in drydock's design-system/ plus a <project>-design skill."
 ---
 
 # Brand & Design System (generator)

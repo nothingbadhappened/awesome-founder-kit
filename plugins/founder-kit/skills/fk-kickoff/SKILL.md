@@ -1,6 +1,6 @@
 ---
 name: fk-kickoff
-description: Use after fk-idea-import, or when a project needs a fresh honest review. Runs the non-negotiables interview, parallel OMC business and architecture reviews, and founder decisions as ADRs.
+description: "Use after fk-idea-import or for a fresh honest review: non-negotiables interview, OMC business and architecture reviews, ADRs."
 ---
 
 # Kickoff Review

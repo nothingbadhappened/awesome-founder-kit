@@ -1,0 +1,46 @@
+{
+  "provider": "azure",
+  "name": "Microsoft Azure",
+  "spend_model": "usage",
+  "hard_cap": "partial",
+  "how_to_set": [
+    "Free and credit-based subscriptions: keep the spending limit on (Cost Management > Subscriptions > spending limit).",
+    "Pay-as-you-go: Cost Management > Budgets > Add (monthly, your amount, alerts at 80/100% actual and forecast) or deploy infra/budgets/azure/budget.bicep.",
+    "Optional: attach an action group to the budget that runs an automation to stop resources."
+  ],
+  "kill_switch": "Spending limit (credit subscriptions only) disables services at the limit; pay-as-you-go budgets only alert unless an action group automation stops resources.",
+  "traps": [
+    "Pay-as-you-go has no spending limit",
+    "Premium disks and public IPs bill while VMs are stopped (not deallocated)",
+    "Log Analytics ingestion",
+    "Egress",
+    "Cost data lags up to a day"
+  ],
+  "billing_safety_score": 4,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://learn.microsoft.com/azure/cost-management-billing/manage/spending-limit",
+    "https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-acm-create-budgets"
+  ],
+  "unverified": [],
+  "signup": "https://azure.microsoft.com/free/",
+  "billing_url": "https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/budgets",
+  "readback": "az consumption budget list",
+  "detect": {
+    "files": [
+      "azure.yaml",
+      "host.json"
+    ],
+    "deps": [
+      "@azure/identity",
+      "azure-identity"
+    ],
+    "tf": "azurerm"
+  },
+  "env_keys": [
+    "AZURE_SUBSCRIPTION_ID",
+    "AZURE_TENANT_ID",
+    "AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET"
+  ]
+}

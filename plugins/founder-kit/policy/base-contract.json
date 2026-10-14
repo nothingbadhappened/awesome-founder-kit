@@ -1,0 +1,80 @@
+{
+  "$comment": "What the base setup owns (Claude Code + OMC + codebase-memory-mcp + MemPalace + SkillSpector + gitleaks + founder-kit hooks). fk interference checks every candidate against it. Names only; re-check after an OMC or Claude Code update.",
+  "version": 1,
+  "roles": {
+    "orchestrator": "oh-my-claudecode",
+    "code_memory": "codebase-memory-mcp",
+    "long_term_memory": "mempalace",
+    "learning": "oh-my-claudecode (remember, wiki, skillify) + founder-kit lessons",
+    "install_scanner": "skillspector",
+    "secret_scanner": "gitleaks",
+    "harm_guards": "founder-kit hooks"
+  },
+  "skills": {
+    "omc": ["agent-doc-discipline", "ai-slop-cleaner", "architecture-survey", "ask", "ask-navigator", "autopilot", "autoresearch",
+      "cancel", "codebase-memory", "configure-notifications", "debug", "deep-interview", "deepinit", "diagram", "drydock", "execute",
+      "external-context", "graph", "harbor", "hud", "intent", "launch", "loft", "map", "minimal-code-discipline",
+      "minimal-prose-discipline", "omc-doctor", "omc-plan", "omc-review", "omc-setup", "pr", "project-session-manager", "ralph",
+      "ralplan", "refit", "release", "remember", "research", "self-improve", "skill", "skillify", "synced", "tdd", "team", "trace",
+      "ultragoal", "verify", "visual-verdict", "wiki"],
+    "omc_retired": ["ultrawork", "ultraqa", "ultrapilot", "swarm", "pipeline", "merge-readiness", "deep-dive", "sciomc", "ccg",
+      "omc-teams", "setup", "mcp-setup", "omc-reference", "learner", "writer-memory", "local-build-reminder"],
+    "kit": ["fk-start", "fk-idea-import", "fk-kickoff", "fk-process", "fk-brand", "fk-journal", "fk-conformance", "fk-scout",
+      "fk-provision", "fk-adopt", "fk-actions", "fk-learn", "fk-steward"],
+    "kit_prefix": "fk-",
+    "builtin": ["security-review", "code-review", "review", "simplify", "init", "loop", "schedule", "fewer-permission-prompts",
+      "update-config", "keybindings-help", "claude-api", "run", "plugin-authoring", "workflow-authoring", "pr-comments", "statusline"],
+    "memory": ["mempalace", "mempalace-recall", "mempalace-task"]
+  },
+  "agents": {
+    "omc": ["analyst", "architect", "code-reviewer", "code-simplifier", "critic", "debugger", "designer", "document-specialist",
+      "executor", "explore", "git-master", "planner", "qa-tester", "scientist", "security-reviewer", "test-engineer", "tracer",
+      "verifier", "writer"],
+    "builtin": ["general-purpose", "Explore", "Plan", "statusline-setup", "claude-code-guide"]
+  },
+  "commands": {
+    "builtin": ["add-dir", "agents", "bug", "clear", "compact", "config", "context", "cost", "doctor", "exit", "export", "feedback",
+      "help", "hooks", "ide", "init", "login", "logout", "mcp", "memory", "model", "permissions", "plan", "plugin", "pr-comments",
+      "release-notes", "resume", "review", "rewind", "security-review", "skills", "status", "statusline", "terminal-setup", "todos",
+      "upgrade", "usage", "vim"]
+  },
+  "keyword_triggers": {
+    "omc": ["cancelomc", "stopomc", "ralph", "autopilot", "auto-pilot", "auto pilot", "fullsend", "full auto", "ralplan",
+      "deep interview", "deep-interview", "ouroboros", "deslop", "anti-slop", "tdd", "test first", "red green", "code review",
+      "review code", "security review", "review security", "ultrathink", "deepsearch", "search the codebase", "find in codebase",
+      "deep-analyze", "deepanalyze"],
+    "omc_phrases": ["build me a", "build me an", "create me a", "make me a", "i want a", "i want an"],
+    "kit": ["fk-approve", "fk-override"]
+  },
+  "mcp": {
+    "servers": ["codebase-memory-mcp", "mempalace", "skillspector"],
+    "tools": {
+      "codebase-memory-mcp": ["delete_project", "detect_changes", "get_architecture", "get_code_snippet", "get_graph_schema",
+        "index_repository", "index_status", "ingest_traces", "list_projects", "manage_adr", "query_graph", "search_code",
+        "search_graph", "trace_path"],
+      "mempalace": ["mempalace_add_drawer", "mempalace_artifact_get", "mempalace_artifact_put", "mempalace_check_duplicate",
+        "mempalace_checkpoint", "mempalace_create_tunnel", "mempalace_delete_by_source", "mempalace_delete_drawer",
+        "mempalace_delete_hallway", "mempalace_delete_tunnel", "mempalace_diary_read", "mempalace_diary_write",
+        "mempalace_event_ack", "mempalace_event_append", "mempalace_event_list", "mempalace_event_wait", "mempalace_find_tunnels",
+        "mempalace_follow_tunnels", "mempalace_get_aaak_spec", "mempalace_get_drawer", "mempalace_get_taxonomy",
+        "mempalace_graph_stats", "mempalace_hook_settings", "mempalace_kg_add", "mempalace_kg_invalidate", "mempalace_kg_query",
+        "mempalace_kg_stats", "mempalace_kg_supersede", "mempalace_kg_timeline", "mempalace_list_drawers", "mempalace_list_hallways",
+        "mempalace_list_rooms", "mempalace_list_tunnels", "mempalace_list_wings", "mempalace_memories_filed_away",
+        "mempalace_mesh_peers", "mempalace_mine", "mempalace_patch_submit", "mempalace_reconnect", "mempalace_search",
+        "mempalace_status", "mempalace_sync", "mempalace_task_create", "mempalace_traverse", "mempalace_update_drawer"]
+    }
+  },
+  "hook_events": {
+    "omc": ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart", "UserPromptSubmit", "Stop"],
+    "codebase-memory-mcp": ["SessionStart", "PreToolUse", "SubagentStart"],
+    "mempalace": ["Stop", "PreCompact", "SessionEnd"],
+    "kit": ["SessionStart", "SubagentStart", "UserPromptSubmit", "PreToolUse", "PostToolUse"]
+  },
+  "owned_paths": ["CLAUDE.md", "AGENTS.md", ".omc/", ".fk/", "docs/standards/", "docs/adr/", ".claude/settings.json",
+    ".claude/settings.local.json", ".claude/omc.jsonc", ".mcp.json", ".githooks/", "~/.claude/settings.json", "~/.claude/CLAUDE.md",
+    "~/.claude/hooks/", "~/.claude/skills/", "~/.claude/agents/"],
+  "runtimes": { "node": "20.0.0", "python": "3.11.0", "git": "2.40.0", "gitleaks": "8.19.0" },
+  "version_managers": { "default": "mise", "python": "uv" },
+  "budget": { "kit_always_on_tokens": 2500, "max_active_mcp_servers": 6, "mcp_tools_soft_cap": 30, "mcp_schema_tokens_soft_cap": 10000,
+    "skill_description_chars": 200, "research_total_tokens": 300000, "research_parallel_agents": 4, "research_stale_days": 90 }
+}

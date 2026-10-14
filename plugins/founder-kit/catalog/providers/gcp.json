@@ -1,0 +1,45 @@
+{
+  "provider": "gcp",
+  "name": "Google Cloud",
+  "spend_model": "usage",
+  "hard_cap": "no",
+  "how_to_set": [
+    "Billing > Budgets & alerts > Create budget: scope this project, monthly amount, alerts at 50/90/100%.",
+    "In the same budget, connect a Pub/Sub topic; deploy the billing-disable function from infra/budgets/gcp (Terraform).",
+    "Test it once with DRY_RUN=true by publishing a fake over-budget message, then set DRY_RUN=false."
+  ],
+  "kill_switch": "Cloud Function on the budget Pub/Sub topic unlinks billing from the project; this stops all paid services and can delete resources.",
+  "traps": [
+    "Cloud Run or functions with min-instances above 0",
+    "Idle static IPs and Cloud NAT",
+    "BigQuery on-demand queries scanning whole tables",
+    "Unrestricted API keys (Maps, Gemini) abused after a leak",
+    "Egress",
+    "Budget data lags by hours"
+  ],
+  "billing_safety_score": 3,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://cloud.google.com/billing/docs/how-to/budgets",
+    "https://cloud.google.com/billing/docs/how-to/disable-billing-with-notifications"
+  ],
+  "unverified": [],
+  "signup": "https://console.cloud.google.com/freetrial",
+  "billing_url": "https://console.cloud.google.com/billing/budgets",
+  "readback": "gcloud billing budgets list",
+  "detect": {
+    "files": [
+      "app.yaml",
+      "cloudbuild.yaml"
+    ],
+    "deps": [
+      "@google-cloud/storage",
+      "google-cloud-storage"
+    ],
+    "tf": "google"
+  },
+  "env_keys": [
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT"
+  ]
+}

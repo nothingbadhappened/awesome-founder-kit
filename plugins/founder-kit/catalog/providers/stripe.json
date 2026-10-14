@@ -1,0 +1,40 @@
+{
+  "provider": "stripe",
+  "name": "Stripe",
+  "spend_model": "fees",
+  "hard_cap": "no",
+  "how_to_set": [
+    "Stripe charges fees per payment, not a cloud bill; there is no cap to set.",
+    "Use restricted keys (only the permissions the app needs); keep live keys out of development.",
+    "Turn on Radar rules and rate-limit public checkout endpoints against card testing."
+  ],
+  "kill_switch": "Roll (revoke) the API keys in Developers > API keys; deactivate payment links.",
+  "traps": [
+    "Card-testing attacks on open checkout endpoints cause fees and disputes",
+    "Dispute fees",
+    "Billing and Tax products add percentage fees",
+    "Live and test keys mixed up"
+  ],
+  "billing_safety_score": 6,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://docs.stripe.com/keys",
+    "https://docs.stripe.com/disputes/prevention/card-testing"
+  ],
+  "unverified": [],
+  "signup": "https://dashboard.stripe.com/register",
+  "billing_url": "https://dashboard.stripe.com/settings/billing",
+  "readback": null,
+  "detect": {
+    "files": [],
+    "deps": [
+      "stripe",
+      "@stripe/stripe-js"
+    ]
+  },
+  "env_keys": [
+    "STRIPE_SECRET_KEY",
+    "STRIPE_PUBLISHABLE_KEY",
+    "STRIPE_WEBHOOK_SECRET"
+  ]
+}

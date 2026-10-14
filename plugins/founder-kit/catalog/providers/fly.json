@@ -1,0 +1,37 @@
+{
+  "provider": "fly",
+  "name": "Fly.io",
+  "spend_model": "usage",
+  "hard_cap": "no",
+  "how_to_set": [
+    "No spending cap. Buy prepaid credits and check the bill to date near month end.",
+    "Set auto_stop_machines and min_machines_running = 0 in fly.toml."
+  ],
+  "kill_switch": "fly scale count 0 (or fly machines stop) per app.",
+  "traps": [
+    "Volumes and dedicated IPv4 keep billing when machines stop",
+    "Machines with auto-stop off run all month",
+    "Prepaid credits do not stop overflow charges in all cases"
+  ],
+  "billing_safety_score": 3,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://community.fly.io/t/how-can-i-place-a-billing-limit-on-my-account/4267",
+    "https://fly.io/docs/about/billing/"
+  ],
+  "unverified": [
+    "Whether exhausted prepaid credits suspend apps or roll into card billing; staff replies conflict"
+  ],
+  "signup": "https://fly.io/app/sign-up",
+  "billing_url": "https://fly.io/dashboard/personal/billing",
+  "readback": null,
+  "detect": {
+    "files": [
+      "fly.toml"
+    ],
+    "deps": []
+  },
+  "env_keys": [
+    "FLY_API_TOKEN"
+  ]
+}

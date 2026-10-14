@@ -4,13 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { readJson, writeJson, takeSnapshot, refreshSnapshot, readSnapshot, listProtected, log, DEFAULT_CONFIG,
-  omcPlugin, omcStatus, fetchOmcLatest, cmpVer, OMC_UPDATE } from '../hooks/lib.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readJson, writeJson, takeSnapshot, refreshSnapshot, readSnapshot, listProtected, log, DEFAULT_CONFIG, RUNTIME,
+  stateDir, readLog, readOverrides, omcPlugin, omcStatus, fetchOmcLatest, cmpVer, OMC_UPDATE, hooksPathStatus, CHAIN_MARK } from '../hooks/lib.mjs';
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATE = path.join(KIT, 'templates', 'project');
-const RUNTIME = ['compliance.jsonl', 'overrides.json', 'snapshots.json', 'ledger.jsonl'];
+const KIT_REAL = (() => { try { return fs.realpathSync.native(KIT); } catch { return KIT; } })();
 
 const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', shell: process.platform === 'win32', ...opts });
 const say = (s = '') => process.stdout.write(s + '\n');
@@ -26,7 +26,33 @@ function needRoot() {
   return root;
 }
 
-function init() {
+// core.hooksPath: set to .githooks when unset; never overwrite another one (husky, a global hooks dir). With --chain,
+// the kit's pre-commit call goes into that dir's pre-commit (right after the shebang) unless it is already there.
+function hooksPath(root, chain) {
+  const hp = run('git', ['config', '--get', 'core.hooksPath'], { cwd: root, shell: false }).stdout.trim();
+  if (!hp || path.resolve(root, hp) === path.resolve(root, '.githooks')) {
+    if (!hp) run('git', ['config', 'core.hooksPath', '.githooks'], { cwd: root, shell: false });
+    return say(`${hp ? 'kept   ' : 'set    '} git core.hooksPath = .githooks`);
+  }
+  const file = path.join(path.resolve(root, hp), 'pre-commit');
+  let text = null;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* none yet */ }
+  if (text?.includes(CHAIN_MARK)) return say(`kept    ${hp}/pre-commit (already runs the kit's pre-commit checks)`);
+  if (!chain) {
+    say(`kept    git core.hooksPath = ${hp} (this repo's own git hooks; fk does not replace them)`);
+    return say(`fk: the kit's pre-commit checks are not wired in yet. To add them to ${hp}/pre-commit, run: fk init --chain`);
+  }
+  const call = `# ${CHAIN_MARK}\nsh "$(git rev-parse --show-toplevel)/.githooks/pre-commit" || exit 1\n`;
+  const lines = (text ?? '#!/bin/sh\n').split('\n');
+  const at = lines[0].startsWith('#!') ? 1 : 0;
+  lines.splice(at, 0, call.trimEnd());
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, lines.join('\n'));
+  fs.chmodSync(file, 0o755);
+  say(`chained ${hp}/pre-commit -> .githooks/pre-commit`);
+}
+
+function init(chain = false) {
   const root = needRoot();
   const fk = path.join(root, '.fk');
   const seed = {
@@ -40,17 +66,20 @@ function init() {
   }
   fs.writeFileSync(path.join(fk, '.gitignore'), RUNTIME.join('\n') + '\n');
   const hooksSrc = path.join(TEMPLATE, '.githooks');
+  // Adopting a repo with work in progress: the founder's index is left alone (no git update-index), only a hint.
+  const st = run('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: root, shell: false });
+  const dirty = st.status === 0 && st.stdout.trim() !== '';
   for (const f of fs.readdirSync(hooksSrc)) {
     const dst = path.join(root, '.githooks', f);
     if (fs.existsSync(dst)) { say(`kept    .githooks/${f} (already present)`); continue; }
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.copyFileSync(path.join(hooksSrc, f), dst);
     fs.chmodSync(dst, 0o755);
-    run('git', ['update-index', '--add', '--chmod=+x', `.githooks/${f}`], { cwd: root, shell: false }); // exec bit on Windows too
     say(`created .githooks/${f}`);
+    if (dirty) say(`fk: uncommitted changes, so .githooks/${f} was not staged. When you commit it, run: git add --chmod=+x .githooks/${f}`);
+    else run('git', ['update-index', '--add', '--chmod=+x', `.githooks/${f}`], { cwd: root, shell: false }); // exec bit on Windows too
   }
-  run('git', ['config', 'core.hooksPath', '.githooks'], { cwd: root, shell: false });
-  say('set     git core.hooksPath = .githooks');
+  hooksPath(root, chain);
   takeSnapshot(root);
   say('fk: ready. Guards are active for this project. Set the pre-commit gates with: fk config set fast_gates "<command>"');
 }
@@ -62,7 +91,10 @@ async function omcRows(add) {
   const npm = plugin ? null : run('omc', ['--version']);
   const npmVer = npm?.status === 0 ? (/\d+\.\d+\.\d+/.exec(npm.stdout) || ['?'])[0] : null;
   if (!plugin && !npmVer) return add('oh-my-claudecode', false, `not found: the kit relies on OMC for the workflow (run: ${OMC_INSTALL})`);
-  if (!plugin) add('OMC install mode', 'yellow', `OMC plugin mode required (run: ${OMC_INSTALL})`);
+  if (!plugin) add('OMC install mode', 'yellow', 'npm install: supported; plugin mode optional. Do not add the plugin copy on top: OMC hooks would fire twice until `omc setup` removes the npm copies from settings.json');
+  const be = process.env.OMC_BUDGET_ENFORCE;
+  add('OMC token budget', be === 'active' || 'yellow', be === 'active' ? 'OMC_BUDGET_ENFORCE=active: OMC warns at 90% of the budget and stops at 100%'
+    : `OMC_BUDGET_ENFORCE is ${be || 'not set (shadow)'}: OMC only logs overruns. For unattended runs set OMC_BUDGET_ENFORCE=active; headless runs (claude -p) can also cap spend with --max-budget-usd <usd>`);
   const mode = plugin ? 'plugin' : 'npm';
   const installed = plugin?.version || npmVer;
   const st = omcStatus(installed, await fetchOmcLatest());
@@ -91,9 +123,14 @@ async function doctor(withHooks) {
   const root = repoRoot();
   const hasFk = !!(root && fs.existsSync(path.join(root, '.fk')));
   add('project .fk/', hasFk || 'yellow', hasFk ? root : `${root ? 'absent' : 'not in a git repo'} (expected before fk init)`);
+  if (hasFk) add('kit state', true, `${stateDir(root)} (snapshots, overrides, log; outside the repo)`);
+  const hs = hasFk && hooksPathStatus(root);
+  if (hs) add('pre-commit checks', hs.on || 'yellow', hs.on ? `on (core.hooksPath = ${hs.hp})`
+    : hs.hp ? `off in this clone: git uses hooks from ${hs.hp}. Run fk init --chain to add the kit's pre-commit call there`
+      : 'off in this clone (core.hooksPath is not .githooks); run fk init to restore');
   if (withHooks) {
     const { runSuite } = await import('../hooks/selftest.mjs');
-    for (const r of runSuite()) add(`planted: ${r.name}`, r.ok, `expected ${r.expected}, got ${r.got}`);
+    for (const r of runSuite()) add(r.name.startsWith('clean: ') ? r.name : `planted: ${r.name}`, r.ok, `expected ${r.expected}, got ${r.got}`);
   }
   print(rows);
 }
@@ -105,11 +142,34 @@ function print(rows) {
   if (rows.some((r) => r[0] === 'red')) process.exitCode = 1;
 }
 
+// Overrides and approvals the kit holds, each matched to the founder-typed line (UserPromptSubmit) that recorded it.
+// Only lines the installed plugin wrote count as typed: runtime: plugin, from this kit's plugin folder (any installed
+// version: same parent folder). A copied or command-started dispatcher has no marker, or another folder.
+const kitHome = (p) => { const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
+const fromKit = (r) => r.runtime === 'plugin' && (!r.plugin_root || kitHome(r.plugin_root) === kitHome(KIT_REAL) || kitHome(path.dirname(r.plugin_root)) === kitHome(path.dirname(KIT_REAL)));
+function untyped(root, rows) {
+  rows = rows.filter(fromKit);
+  const typed = (decision, prefix, session) => rows.some((r) => r.event === 'UserPromptSubmit' && r.decision === decision
+    && String(r.reason ?? '').startsWith(prefix) && (!session || r.session === session));
+  const out = [];
+  for (const o of readOverrides(root)) {
+    if (!rows.some((r) => r.decision === 'override-set' && r.event === 'UserPromptSubmit' && r.guard === o.guard && r.expires === o.expires && r.session === o.session)) out.push(`override of ${o.guard} (${o.reason})`);
+  }
+  const tc = readJson(path.join(root, '.fk', 'toolchain.json'), {});
+  const byProposal = new Set((tc.entries || []).filter((e) => typed('approve-proposal', `${e.proposal}:`)).flatMap((e) => e.specs || []));
+  for (const spec of tc.approved || []) if (!byProposal.has(spec) && !typed('approve-tool', `${spec}:`, tc.approvals?.[spec]?.session)) out.push(`tool ${spec}`);
+  if (tc.enforce && !typed('enforce-tools', 'enforce:', tc.approvals?.enforce?.session)) out.push('install-guard enforce');
+  const providers = readJson(path.join(root, '.fk', 'budgets.json'), {}).providers || {};
+  for (const [p, b] of Object.entries(providers)) if (!typed('approve-budget', `${p} $`, b?.session)) out.push(`budget ${p}`);
+  return out;
+}
+
 function audit() {
   const root = needRoot();
-  const file = path.join(root, '.fk', 'compliance.jsonl');
-  if (!fs.existsSync(file)) return say('fk audit: nothing logged yet.');
-  const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const rows = readLog(root);
+  const forged = untyped(root, rows);
+  if (forged.length) say(`fk audit: NOT typed by you, review: ${forged.join('; ')}. Remove what you did not approve (git checkout -- .fk/<file>).`);
+  if (!rows.length) return say('fk audit: nothing logged yet.');
   const count = (pred) => rows.filter(pred).length;
   say(`fk audit: ${rows.length} entries since ${rows[0]?.ts ?? '-'}.`);
   say(`- ${count((r) => r.decision === 'deny')} actions were blocked, ${count((r) => r.decision === 'ask')} were sent to you for a yes/no.`);
@@ -118,6 +178,9 @@ function audit() {
   say(`- ${count((r) => r.decision === 'override-set')} overrides you approved; ${count((r) => r.decision === 'allow-override')} actions went through on them.`);
   say(`- ${count((r) => r.guard === 'pointer')} times agents were pointed at the agreements.`);
   say(`- ${count((r) => r.error)} guard errors${count((r) => r.error) ? ' (run `fk doctor`)' : ''}.`);
+  const unmarked = count((r) => r.event === 'UserPromptSubmit' && /^(?:override-set|approve-|enforce-)/.test(r.decision || '') && !fromKit(r));
+  const untrusted = count((r) => r.decision === 'directive-untrusted-runtime');
+  if (unmarked || untrusted) say(`- ${unmarked} approval lines lack the plugin runtime marker (or came from another plugin folder) and ${untrusted} directives came from outside the installed plugin: review them.`);
   const byGuard = {};
   for (const r of rows) if (r.decision === 'deny' || r.decision === 'tamper') byGuard[r.guard] = (byGuard[r.guard] || 0) + 1;
   if (Object.keys(byGuard).length) say('Blocked by guard: ' + Object.entries(byGuard).map(([g, n]) => `${g} ${n}`).join(', ') + '.');
@@ -196,6 +259,14 @@ function uninstall() {
   process.exitCode = 0;
   const hp = run('git', ['config', '--get', 'core.hooksPath'], { cwd: root, shell: false }).stdout.trim();
   if (hp === '.githooks') { run('git', ['config', '--unset', 'core.hooksPath'], { cwd: root, shell: false }); say('unset   git core.hooksPath'); }
+  else if (hp) {
+    const pc = path.join(path.resolve(root, hp), 'pre-commit');
+    const text = fs.existsSync(pc) ? fs.readFileSync(pc, 'utf8') : '';
+    if (text.includes(CHAIN_MARK)) {
+      fs.writeFileSync(pc, text.split('\n').filter((l, i, a) => !l.includes(CHAIN_MARK) && !a[i - 1]?.includes(CHAIN_MARK)).join('\n'));
+      say(`unchained ${hp}/pre-commit`);
+    }
+  }
   const tdir = path.join(TEMPLATE, '.githooks');
   for (const f of fs.readdirSync(tdir)) {
     const p = path.join(root, '.githooks', f);
@@ -203,18 +274,36 @@ function uninstall() {
     else if (fs.existsSync(p)) say(`kept    .githooks/${f} (edited by the project)`);
   }
   try { fs.rmdirSync(path.join(root, '.githooks')); } catch { /* not empty or absent */ }
+  // Take back out exactly what `fk memory setup` added (.fk/memory.json); the project's own settings stay.
+  const mem = readJson(path.join(root, '.fk', 'memory.json'), null);
+  const sfile = path.join(root, '.claude', 'settings.json');
+  const s = mem && readJson(sfile, null);
+  if (s) {
+    const deny = (s.permissions?.deny || []).filter((t) => !(mem.deny_added || []).includes(t));
+    if (s.permissions?.deny) { if (deny.length) s.permissions.deny = deny; else delete s.permissions.deny; }
+    if (s.permissions && !Object.keys(s.permissions).length) delete s.permissions;
+    for (const p of mem.plugins_disabled || []) if (s.enabledPlugins?.[p] === false) delete s.enabledPlugins[p];
+    if (s.enabledPlugins && !Object.keys(s.enabledPlugins).length) delete s.enabledPlugins;
+    writeJson(sfile, s);
+    say('cleaned .claude/settings.json (memory tool limits the kit added)');
+  }
+  fs.rmSync(stateDir(root), { recursive: true, force: true });
   fs.rmSync(path.join(root, '.fk'), { recursive: true, force: true });
-  say('removed .fk/');
+  say('removed .fk/ and the kit state for this project');
   say('fk: uninstalled. docs/ and .omc/ were left untouched.');
 }
 
 const [cmd, ...args] = process.argv.slice(2);
 const commands = {
-  init, audit, uninstall,
+  audit, uninstall,
+  init: () => init(args.includes('--chain')),
   doctor: () => doctor(args.includes('--hooks')),
   config: () => config(...args),
   kickoff: () => kickoff(args[0]),
   'omc-refresh': () => fetchOmcLatest(), // background refresh started by the SessionStart hook
 };
+// Extra commands live in bin/cmd/<name>.mjs (default export: async (args) => void), so features stay in their own files.
+const extra = cmd && /^[a-z][\w-]*$/.test(cmd) ? path.join(path.dirname(fileURLToPath(import.meta.url)), 'cmd', `${cmd}.mjs`) : '';
 if (commands[cmd]) commands[cmd]();
-else say('usage: fk init | fk doctor [--hooks] | fk audit | fk config set <key> <value> | fk kickoff protect|release | fk uninstall');
+else if (extra && fs.existsSync(extra)) import(pathToFileURL(extra).href).then((m) => m.default(args));
+else say('usage: fk init [--chain] | fk doctor [--hooks] | fk audit | fk config set <key> <value> | fk kickoff protect|release | fk uninstall');

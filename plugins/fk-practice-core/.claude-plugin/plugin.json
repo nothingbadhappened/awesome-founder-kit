@@ -1,0 +1,14 @@
+{
+  "name": "fk-practice-core",
+  "version": "0.1.0",
+  "description": "Cross-stack engineering practices: coding standards, API design, hexagonal architecture, error handling, ADRs, security checklist, search-first, verification reference, token hygiene.",
+  "author": {
+    "name": "Founder Kit maintainers"
+  },
+  "license": "MIT",
+  "keywords": [
+    "founder-kit",
+    "practice-pack",
+    "core"
+  ]
+}

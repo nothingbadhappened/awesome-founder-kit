@@ -1,0 +1,606 @@
+{
+  "source": {
+    "name": "everything-claude-code (ECC)",
+    "repository": "https://github.com/affaan-m/ECC",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Affaan Mustafa",
+    "ref": "v2.2.3",
+    "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9"
+  },
+  "policy": "Practice packs are passive knowledge skills loaded on demand by OMC agents; no ECC agents, commands, hooks or routing rules are vendored.",
+  "scan": {
+    "tool": "skillspector",
+    "mode": "scan <quarantine> --no-llm -f json",
+    "result": "see THIRD_PARTY_NOTICES.md; all findings triaged as documentation false positives, no file rejected"
+  },
+  "not_found_at_ref": [
+    "skills/prompt-caching-strategy"
+  ],
+  "files": [
+    {
+      "upstream_path": "LICENSE",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2",
+      "bytes": 1071,
+      "local_paths": [
+        "vendor/ecc/LICENSE"
+      ],
+      "adaptation": "Verbatim copy of the upstream MIT license."
+    },
+    {
+      "upstream_path": "skills/coding-standards/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "e80544c3d1eac5b14f22022146bd91a6b0ecc30e099cf5181894853aeb81dee1",
+      "bytes": 12866,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-coding-standards/SKILL.md"
+      ],
+      "adaptation": "Distilled to cross-language rules; immutability softened to a project-decided default; coverage left to project standards; TS/React examples dropped."
+    },
+    {
+      "upstream_path": "skills/api-design/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "250e464413a13c0eb93cc73447b423df1f9aa8e4f80e5e68c41f895b2c33e352",
+      "bytes": 13224,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-api-design/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules and checklist; per-language implementation examples dropped."
+    },
+    {
+      "upstream_path": "skills/hexagonal-architecture/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "1579f70e4cd5a2dde39d29a2055d18b39f06b063a308d3b43a498900c99495b7",
+      "bytes": 11520,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-hexagonal-architecture/SKILL.md"
+      ],
+      "adaptation": "Trimmed; scoped to projects whose ADR calls for it; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/error-handling/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "e8eec6756c950b570486493e64e3bf14c12baf6bf0858bf3928097fe2bfeaf79",
+      "bytes": 10984,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-error-handling/SKILL.md"
+      ],
+      "adaptation": "Converted to steps; added timeouts/idempotency notes; code examples reduced to one-line pointers."
+    },
+    {
+      "upstream_path": "skills/architecture-decision-records/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "263b20e81801aa5fa7e75eaec6c38345c0ac028ca0edbd67b1b9071c5fcbe11f",
+      "bytes": 7182,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-adr-writing/SKILL.md"
+      ],
+      "adaptation": "Merged with the founder-kit ADR template (fitness gate); planner/code-reviewer agent integration removed."
+    },
+    {
+      "upstream_path": "skills/security-review/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "b9eb6416eebc8dda046674f0a2dbb3be88aff526d182b60a0f55998d3d6d0d8d",
+      "bytes": 12955,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-security-checklist/SKILL.md"
+      ],
+      "adaptation": "Renamed to avoid the Claude Code built-in /security-review; converted to a checklist; hidden maintainer HTML comment dropped; deploy checklist kept."
+    },
+    {
+      "upstream_path": "skills/security-review/cloud-infrastructure-security.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "7d9a83852475a9396e04c59c73df84ac24ee0f41322016de7c11c62138c2a8ca",
+      "bytes": 10171,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-security-checklist/reference.md"
+      ],
+      "adaptation": "Cloud/CI essentials kept as reference.md linked from step 9; CLI examples dropped; pinned actions advised."
+    },
+    {
+      "upstream_path": "skills/search-first/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "76835db48dd910061d2e4271b1151793d2fddbabeb2d2866eed068b3580c55d5",
+      "bytes": 8210,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-search-first/SKILL.md"
+      ],
+      "adaptation": "Mapped onto OMC research; researcher-agent launch and ECC skill/settings paths removed."
+    },
+    {
+      "upstream_path": "skills/verification-loop/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "503aebee7d414f559c4874600081a40b1e7aea269b58073c5c9660c6641b00a0",
+      "bytes": 2792,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-verification-reference/SKILL.md"
+      ],
+      "adaptation": "Reference for OMC verify; 80% coverage target replaced by the project threshold; /verify command reference removed."
+    },
+    {
+      "upstream_path": "skills/context-budget/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "a9ade47d2e8387ce1362cfaa613722b6f35ae082b6cb8c61aad57c866d92fe69",
+      "bytes": 8045,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-token-hygiene/SKILL.md"
+      ],
+      "adaptation": "Distilled into the audit section of fk-token-hygiene; ECC command and JSONL script dropped."
+    },
+    {
+      "upstream_path": "skills/token-budget-advisor/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "7f037a58306a6bd5c5a024491a6c4529cd8373309e413eda517ad2430420e25a",
+      "bytes": 5740,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-token-hygiene/SKILL.md"
+      ],
+      "adaptation": "Reduced to one rule on honouring requested answer length; interactive depth menu dropped."
+    },
+    {
+      "upstream_path": "docs/token-optimization.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "68de45109885f80c20dc40b0639ee993041de49430e7109d04e4a8808f5ae656",
+      "bytes": 6520,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-token-hygiene/SKILL.md"
+      ],
+      "adaptation": "Model tiering, compaction and MCP scoping advice distilled; ECC env vars and settings-file edits dropped."
+    },
+    {
+      "upstream_path": "the-longform-guide.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "fb8c31ee8c19bca9e93aaa1ba4d988dea4548413afdf8cb2082d3b95a1ab95a8",
+      "bytes": 15015,
+      "local_paths": [
+        "plugins/fk-practice-core/skills/fk-token-hygiene/SKILL.md"
+      ],
+      "adaptation": "Token-economics advice distilled (CLI over MCP, state files, subagent briefs, worktrees); marketing, images and ECC links dropped."
+    },
+    {
+      "upstream_path": "skills/backend-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "9b983d0297a983110fdfda8dce55d19b750ca3e53ef155d75a3eff740d3874b8",
+      "bytes": 13349,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-backend-patterns/SKILL.md"
+      ],
+      "adaptation": "Converted to rules; in-memory queue example replaced by durable-queue guidance; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/frontend-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "a5b971eb9e74cd763c7e3308bfd888e0d9cf69f8b88477659889d77182479740",
+      "bytes": 15432,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-frontend-patterns/SKILL.md"
+      ],
+      "adaptation": "Converted to rules; memoization made measurement-driven; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/react-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "f3208d44a5d553038c42e046cec4dc16e4a3d90a9dbf931f883a2e21919a64a9",
+      "bytes": 11466,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-react-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed; ECC rules/agents/commands references removed."
+    },
+    {
+      "upstream_path": "skills/react-testing/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "51c18b4e28285bb876ef469e47c6f53108b5a9f900950a60e897c3c24826a65e",
+      "bytes": 13168,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-react-testing/SKILL.md"
+      ],
+      "adaptation": "Trimmed; fixed coverage table replaced by project thresholds; ECC agents/commands removed."
+    },
+    {
+      "upstream_path": "skills/e2e-testing/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "b0e00e7e17cb259101139900816c5528aed18dd10bcf5f9cb42cfc35baf8a755",
+      "bytes": 8170,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-e2e-testing/SKILL.md"
+      ],
+      "adaptation": "Trimmed; added API-test and storageState guidance; unpinned npx examples dropped."
+    },
+    {
+      "upstream_path": "skills/postgres-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "9c8c391ae9e9aa87faa7ca091e1d395c97766df14080d0bfbea8a97721776163",
+      "bytes": 3914,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-postgres-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed; id-type rule softened to project ADR; database-reviewer agent reference removed."
+    },
+    {
+      "upstream_path": "skills/prisma-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "fb0c7644f32b22ee030071c71fa00bda1825f955f7304a375ef299a7290227f2",
+      "bytes": 15281,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-prisma-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules and traps; unpinned npx examples dropped."
+    },
+    {
+      "upstream_path": "skills/redis-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "6cabb1cd03174a0584ff3538371c780aba90da156db15260691278ed3307d8fe",
+      "bytes": 11977,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-redis-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/docker-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "2a880cf2f6401874151daa9bcc0eacd10cf79f5f48b97f98e93a877a8f3fd12b",
+      "bytes": 14937,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-docker-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed; ECC plugin-setup installer harness instructions removed."
+    },
+    {
+      "upstream_path": "skills/database-migrations/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "dad2f1964295eee14a96e06213ce3f60992bbcdc1f37a50c828bbc2e1abd79dd",
+      "bytes": 12034,
+      "local_paths": [
+        "plugins/fk-practice-web/skills/fk-database-migrations/SKILL.md",
+        "plugins/fk-practice-web/skills/fk-database-migrations/reference.md"
+      ],
+      "adaptation": "Steps in SKILL.md; per-tool commands moved to reference.md; CLIs run via locked local installs."
+    },
+    {
+      "upstream_path": "skills/python-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "103e0130dac33a49d26705fc5a2df804980fcab6a0138d65bc7f370a987d49f6",
+      "bytes": 16914,
+      "local_paths": [
+        "plugins/fk-practice-python/skills/fk-python-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules and tables; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/python-testing/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "b9f7a158dae3b6c06c9c75ffe84e27a1edc86092d2afdcb39e96fc2569902eb7",
+      "bytes": 18955,
+      "local_paths": [
+        "plugins/fk-practice-python/skills/fk-python-testing/SKILL.md"
+      ],
+      "adaptation": "Trimmed; TDD delegated to OMC tdd; 80% coverage replaced by project threshold."
+    },
+    {
+      "upstream_path": "skills/django-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "14abe2b635054dff872c07d4993057e614b48ac718c0431f1299931be7d69516",
+      "bytes": 21116,
+      "local_paths": [
+        "plugins/fk-practice-python/skills/fk-django-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules; on_commit side effects added; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/django-security/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "e043c9d300695aea5a9bb4c72a6f47e47ba1f2c7ddc1e82b8191acd0ad70c54a",
+      "bytes": 17269,
+      "local_paths": [
+        "plugins/fk-practice-python/skills/fk-django-security/SKILL.md"
+      ],
+      "adaptation": "Converted to a checklist; deprecated XSS filter header dropped."
+    },
+    {
+      "upstream_path": "skills/django-tdd/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "20bd5378fb9b76b396916daa8781dd45eef6336e5d4b3a46edb0c3e4eefaf074",
+      "bytes": 21031,
+      "local_paths": [
+        "plugins/fk-practice-python/skills/fk-django-testing/SKILL.md"
+      ],
+      "adaptation": "Renamed (testing); SQLite/no-migrations defaults softened; coverage targets left to project."
+    },
+    {
+      "upstream_path": "skills/fastapi-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "f54c2bf5a61eeda47c939da265b1431d609c231611e71b688b0b734a064b18f3",
+      "bytes": 15637,
+      "local_paths": [
+        "plugins/fk-practice-python/skills/fk-fastapi-patterns/SKILL.md"
+      ],
+      "adaptation": "Converted to steps; create_all-at-startup discouraged in favour of migrations."
+    },
+    {
+      "upstream_path": "skills/golang-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "d643e354683167727cfeb76934855db988468cd15b3ca01db9a32db43902edf7",
+      "bytes": 14136,
+      "local_paths": [
+        "plugins/fk-practice-go/skills/fk-golang-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/golang-testing/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "e3399562c58590dfcbd09bfcbf8f401120a2ded0418eb33bbfca6c697ac485ad",
+      "bytes": 16744,
+      "local_paths": [
+        "plugins/fk-practice-go/skills/fk-golang-testing/SKILL.md"
+      ],
+      "adaptation": "Trimmed; coverage targets left to project; CI coverage gate example dropped."
+    },
+    {
+      "upstream_path": "skills/springboot-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "ff1884a8492d078d1bbb35f3ce0a8ae25f1ad95dab8596f4944a7c3110680946",
+      "bytes": 10047,
+      "local_paths": [
+        "plugins/fk-practice-jvm/skills/fk-springboot-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/springboot-security/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "566ecf928bf76812d15efd62e2f00841652e1618f0a97d8dda93e1c247a162c5",
+      "bytes": 8133,
+      "local_paths": [
+        "plugins/fk-practice-jvm/skills/fk-springboot-security/SKILL.md"
+      ],
+      "adaptation": "Converted to a checklist; resource-server auth preferred over hand-written JWT filter."
+    },
+    {
+      "upstream_path": "skills/springboot-tdd/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "e4bd145484d93fb569eb0e1a09ffeb5cca68533d63c83805146b111c48bba172",
+      "bytes": 3786,
+      "local_paths": [
+        "plugins/fk-practice-jvm/skills/fk-springboot-testing/SKILL.md"
+      ],
+      "adaptation": "Renamed (testing); 80% coverage replaced by project threshold; test-type selection table added."
+    },
+    {
+      "upstream_path": "skills/kotlin-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "e519234772a3697763ad484908d180c4c653439fea75a56c03440c272f9f0896",
+      "bytes": 18951,
+      "local_paths": [
+        "plugins/fk-practice-jvm/skills/fk-kotlin-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules; immutability softened to a default; Gradle version pins dropped."
+    },
+    {
+      "upstream_path": "skills/kotlin-testing/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "13e39ad65e86e86c22fbdb6273bdc8d17d3784c221a8f08207a1e9e2e9c29a0a",
+      "bytes": 20800,
+      "local_paths": [
+        "plugins/fk-practice-jvm/skills/fk-kotlin-testing/SKILL.md"
+      ],
+      "adaptation": "Trimmed; 80% Kover gate replaced by project threshold."
+    },
+    {
+      "upstream_path": "skills/kotlin-coroutines-flows/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "ed7d895ecd6c717fbdbf7f1469110df74a6337792acd1232c4ad7286abee76e4",
+      "bytes": 7869,
+      "local_paths": [
+        "plugins/fk-practice-jvm/skills/fk-kotlin-coroutines-flows/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules; one-off event guidance clarified."
+    },
+    {
+      "upstream_path": "skills/quarkus-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "5f91bed186170a23837452508fc731ec4cada0a337ae95b1327f80311fa6ab6b",
+      "bytes": 21520,
+      "local_paths": [
+        "plugins/fk-practice-jvm/skills/fk-quarkus-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed; Lombok and always-on event tracking softened to project choices."
+    },
+    {
+      "upstream_path": "skills/swiftui-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "79e3c8b5b7c38fa04778b1084cddc2f8db5f671e682b0e9c1d5bd2f95800f690",
+      "bytes": 7039,
+      "local_paths": [
+        "plugins/fk-practice-apple/skills/fk-swiftui-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules and tables."
+    },
+    {
+      "upstream_path": "skills/swift-concurrency-6-2/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "00aed6a804ff7dc9b37d119cdb115d0869643dd84caf3c01d7f058398ab1955a",
+      "bytes": 8117,
+      "local_paths": [
+        "plugins/fk-practice-apple/skills/fk-swift-concurrency/SKILL.md"
+      ],
+      "adaptation": "Renamed; trimmed; one @concurrent example kept."
+    },
+    {
+      "upstream_path": "skills/swift-actor-persistence/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "438f75a3f37db2b8db699fb5d27a7207d0f31eace31d057b775ad152d6462c5c",
+      "bytes": 4906,
+      "local_paths": [
+        "plugins/fk-practice-apple/skills/fk-swift-actor-persistence/SKILL.md"
+      ],
+      "adaptation": "Trimmed; added scope limits and testing notes."
+    },
+    {
+      "upstream_path": "skills/swift-protocol-di-testing/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "1e0b9fddf0a731956cdc686fb55dfa1862a5f172a5140299f4ec9d95c7a5e6e9",
+      "bytes": 6112,
+      "local_paths": [
+        "plugins/fk-practice-apple/skills/fk-swift-protocol-di-testing/SKILL.md"
+      ],
+      "adaptation": "Converted to steps."
+    },
+    {
+      "upstream_path": "skills/rust-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "51379df2bd92a482309e109e5a210210842594f660cceeb2d68d18e995108edf",
+      "bytes": 13500,
+      "local_paths": [
+        "plugins/fk-practice-rust/skills/fk-rust-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/rust-testing/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "02a9a40dcc42dd21d14730d29b13ee0a8b274694360585dc0fadb2602eb56ddf",
+      "bytes": 11798,
+      "local_paths": [
+        "plugins/fk-practice-rust/skills/fk-rust-testing/SKILL.md"
+      ],
+      "adaptation": "Trimmed; 80% coverage gate replaced by project threshold."
+    },
+    {
+      "upstream_path": "skills/dotnet-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "61bc21a6c6d6d1230d90f0bbebca55101b1b63de68ece8574152cbad152cef07",
+      "bytes": 9316,
+      "local_paths": [
+        "plugins/fk-practice-dotnet/skills/fk-dotnet-patterns/SKILL.md"
+      ],
+      "adaptation": "Trimmed to rules; options validation and HttpClientFactory added."
+    },
+    {
+      "upstream_path": "skills/csharp-testing/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "ee93aae975fa9d44bebc33be010b24435d38177e77395c697048622d9be68ad1",
+      "bytes": 8726,
+      "local_paths": [
+        "plugins/fk-practice-dotnet/skills/fk-csharp-testing/SKILL.md"
+      ],
+      "adaptation": "Trimmed; EF in-memory provider discouraged for relational tests."
+    },
+    {
+      "upstream_path": "skills/laravel-patterns/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "6fa9d96a7b944ef9775e2ecb93a56bc29d6219e34eb5af491792638fc5cb46b4",
+      "bytes": 10664,
+      "local_paths": [
+        "plugins/fk-practice-php/skills/fk-laravel-patterns/SKILL.md"
+      ],
+      "adaptation": "Converted to request-flow steps; code examples dropped."
+    },
+    {
+      "upstream_path": "skills/laravel-security/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "0440ddff450c63a9338f15b765ec35486f3f3266b321e0b27128faa3c29784fe",
+      "bytes": 26556,
+      "local_paths": [
+        "plugins/fk-practice-php/skills/fk-laravel-security/SKILL.md",
+        "plugins/fk-practice-php/skills/fk-laravel-security/reference.md"
+      ],
+      "adaptation": "Checklist in SKILL.md; trimmed examples moved to reference.md."
+    },
+    {
+      "upstream_path": "skills/laravel-tdd/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "505fa6c5caad022a5db0c359aebdcdcce1ad16e5863dc13ef862aec48cfa1628",
+      "bytes": 17863,
+      "local_paths": [
+        "plugins/fk-practice-php/skills/fk-laravel-testing/SKILL.md"
+      ],
+      "adaptation": "Renamed (testing); coverage targets left to project."
+    },
+    {
+      "upstream_path": "skills/eval-harness/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "3a5339a5a80099a5c9d55da9b6c8e05a690f5befc6f78d779c75dd79d818ca07",
+      "bytes": 8738,
+      "local_paths": [
+        "plugins/fk-practice-llm/skills/fk-eval-harness/SKILL.md"
+      ],
+      "adaptation": "Converted to steps; ECC scripts, /eval commands and .claude/evals paths removed; thresholds project-decided."
+    },
+    {
+      "upstream_path": "skills/cost-aware-llm-pipeline/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "2d6c19c2d21a473db8720c4f723f17d265eeec48f84614f0169be2df2fbe28ff",
+      "bytes": 5992,
+      "local_paths": [
+        "plugins/fk-practice-llm/skills/fk-cost-aware-llm-pipeline/SKILL.md"
+      ],
+      "adaptation": "Converted to steps; dated price table and hard-coded model ids removed; prompt-caching guidance expanded (upstream prompt-caching-strategy skill absent at this ref)."
+    },
+    {
+      "upstream_path": "skills/ai-regression-testing/SKILL.md",
+      "ref": "v2.2.3",
+      "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+      "sha256": "83f2f5c4083af5762dd658f742d4a390eb3a6f969d835f69e8f47efba296c127",
+      "bytes": 11659,
+      "local_paths": [
+        "plugins/fk-practice-llm/skills/fk-ai-regression-testing/SKILL.md"
+      ],
+      "adaptation": "Converted to steps; \"never test code without bugs\" softened; /bug-check command removed."
+    }
+  ]
+}

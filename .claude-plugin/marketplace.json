@@ -4,15 +4,72 @@
   "owner": {
     "name": "Founder Kit maintainers"
   },
-  "allowCrossMarketplaceDependenciesOn": [
-    "omc"
-  ],
   "plugins": [
     {
       "name": "founder-kit",
       "source": "./plugins/founder-kit",
       "description": "Founder layer on top of oh-my-claudecode: idea import, kickoff review, decisions as ADRs, project standards in drydock slots, conformance lens, brand system, process journal.",
-      "version": "0.3.0"
+      "version": "0.4.0"
+    },
+    {
+      "name": "fk-practice-core",
+      "source": "./plugins/fk-practice-core",
+      "description": "Cross-stack engineering practices: coding standards, API design, hexagonal architecture, error handling, ADRs, security checklist, search-first, verification reference, token hygiene.",
+      "version": "0.1.0"
+    },
+    {
+      "name": "fk-practice-web",
+      "source": "./plugins/fk-practice-web",
+      "description": "Web stack practices: Node backend and frontend patterns, React, React testing, Playwright E2E, Postgres, Prisma, Redis, Docker, database migrations.",
+      "version": "0.1.0"
+    },
+    {
+      "name": "fk-practice-python",
+      "source": "./plugins/fk-practice-python",
+      "description": "Python practices: idioms, pytest, Django patterns, Django security, Django testing, FastAPI.",
+      "version": "0.1.0"
+    },
+    {
+      "name": "fk-practice-go",
+      "source": "./plugins/fk-practice-go",
+      "description": "Go practices: idiomatic patterns and testing.",
+      "version": "0.1.0"
+    },
+    {
+      "name": "fk-practice-jvm",
+      "source": "./plugins/fk-practice-jvm",
+      "description": "JVM practices: Spring Boot patterns, security and testing; Kotlin patterns, coroutines/Flow and testing; Quarkus.",
+      "version": "0.1.0"
+    },
+    {
+      "name": "fk-practice-apple",
+      "source": "./plugins/fk-practice-apple",
+      "description": "Apple platform practices: SwiftUI, Swift 6.2 concurrency, actor-based persistence, protocol DI testing.",
+      "version": "0.1.0"
+    },
+    {
+      "name": "fk-practice-rust",
+      "source": "./plugins/fk-practice-rust",
+      "description": "Rust practices: idiomatic patterns and testing.",
+      "version": "0.1.0"
+    },
+    {
+      "name": "fk-practice-dotnet",
+      "source": "./plugins/fk-practice-dotnet",
+      "description": ".NET practices: C# and ASP.NET Core patterns, C# testing.",
+      "version": "0.1.0"
+    },
+    {
+      "name": "fk-practice-php",
+      "source": "./plugins/fk-practice-php",
+      "description": "PHP practices: Laravel patterns, security and testing.",
+      "version": "0.1.0"
+    },
+    {
+      "name": "fk-practice-llm",
+      "source": "./plugins/fk-practice-llm",
+      "description": "LLM application practices: eval harness, cost-aware LLM pipelines, regression testing for AI-written code.",
+      "version": "0.1.0"
     }
   ]
 }

@@ -1,0 +1,14 @@
+{
+  "name": "fk-practice-apple",
+  "version": "0.1.0",
+  "description": "Apple platform practices: SwiftUI, Swift 6.2 concurrency, actor-based persistence, protocol DI testing.",
+  "author": {
+    "name": "Founder Kit maintainers"
+  },
+  "license": "MIT",
+  "keywords": [
+    "founder-kit",
+    "practice-pack",
+    "apple"
+  ]
+}

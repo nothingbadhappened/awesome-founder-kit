@@ -1,0 +1,39 @@
+{
+  "provider": "neon",
+  "name": "Neon",
+  "spend_model": "usage",
+  "hard_cap": "no",
+  "how_to_set": [
+    "Free plan: limits are hard.",
+    "Paid (Launch/Scale): Billing > Spending limit: set your amount (alerts at 80% and 100%).",
+    "Cap autoscaling max CU and set scale-to-zero on every compute."
+  ],
+  "kill_switch": "Suspend computes per project (console or API); the spending limit itself only emails today.",
+  "traps": [
+    "Spending limit alerts but does not suspend computes yet",
+    "Autoscaling max CU",
+    "Branches with their own computes",
+    "History retention storage"
+  ],
+  "billing_safety_score": 5,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://neon.com/faqs/postgres-services-capping-monthly-spend-autoscaling",
+    "https://neon.com/docs/introduction/plans"
+  ],
+  "unverified": [
+    "Neon pages disagree whether reaching the spending limit suspends computes; treated as alert-only"
+  ],
+  "signup": "https://console.neon.tech/signup",
+  "billing_url": "https://console.neon.tech/app/billing",
+  "readback": null,
+  "detect": {
+    "files": [],
+    "deps": [
+      "@neondatabase/serverless"
+    ]
+  },
+  "env_keys": [
+    "DATABASE_URL"
+  ]
+}

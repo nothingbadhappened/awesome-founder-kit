@@ -1,0 +1,38 @@
+{
+  "provider": "fal",
+  "name": "fal.ai",
+  "spend_model": "usage",
+  "hard_cap": "yes",
+  "how_to_set": [
+    "Prepaid credits: buy only what you plan to spend; keep auto top-up off.",
+    "One key per app; delete it to stop."
+  ],
+  "kill_switch": "Requests fail when credits run out; delete the key to stop at once.",
+  "traps": [
+    "Auto top-up, if enabled",
+    "Serverless apps you deploy bill differently from model APIs",
+    "Video models priced per second"
+  ],
+  "billing_safety_score": 8,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://docs.fal.ai/documentation/model-apis/pricing",
+    "https://fal.ai/docs/platform-apis/v1/account/billing.md"
+  ],
+  "unverified": [
+    "Auto top-up setting and its default could not be confirmed in fal docs"
+  ],
+  "signup": "https://fal.ai/login",
+  "billing_url": "https://fal.ai/dashboard/billing",
+  "readback": null,
+  "detect": {
+    "files": [],
+    "deps": [
+      "@fal-ai/client",
+      "fal-client"
+    ]
+  },
+  "env_keys": [
+    "FAL_KEY"
+  ]
+}

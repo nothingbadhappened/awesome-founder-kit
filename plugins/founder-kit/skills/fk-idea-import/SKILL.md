@@ -1,6 +1,6 @@
 ---
 name: fk-idea-import
-description: Use at project start, or when the founder shares a chat link, export, notes or voice memo of their brainstorm, to import it in full as docs/00-source.md.
+description: "Use at project start or when the founder shares a brainstorm (chat link, export, notes, voice memo): import it as docs/00-source.md."
 ---
 
 # Idea Import

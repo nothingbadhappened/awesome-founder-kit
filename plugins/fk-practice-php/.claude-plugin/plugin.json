@@ -1,0 +1,14 @@
+{
+  "name": "fk-practice-php",
+  "version": "0.1.0",
+  "description": "PHP practices: Laravel patterns, security and testing.",
+  "author": {
+    "name": "Founder Kit maintainers"
+  },
+  "license": "MIT",
+  "keywords": [
+    "founder-kit",
+    "practice-pack",
+    "php"
+  ]
+}

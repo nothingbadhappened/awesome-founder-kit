@@ -1,0 +1,37 @@
+{
+  "provider": "render",
+  "name": "Render",
+  "spend_model": "usage",
+  "hard_cap": "no",
+  "how_to_set": [
+    "No spending limit exists. Watch Billing > projected charges weekly.",
+    "Prefer fixed-price instance types; suspend services you do not use."
+  ],
+  "kill_switch": "Suspend services in the dashboard or via the API (POST /v1/services/{id}/suspend).",
+  "traps": [
+    "Bandwidth overage cannot be limited",
+    "Autoscaling raises instance count",
+    "Preview environments each run instances"
+  ],
+  "billing_safety_score": 4,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://community.render.com/t/spend-limits-for-paid-plans/20986",
+    "https://feedback.render.com/features/p/account-spending-limits"
+  ],
+  "unverified": [
+    "Absence of a spend limit is from staff forum replies and a feature request, not from billing docs"
+  ],
+  "signup": "https://dashboard.render.com/register",
+  "billing_url": "https://dashboard.render.com/billing",
+  "readback": null,
+  "detect": {
+    "files": [
+      "render.yaml"
+    ],
+    "deps": []
+  },
+  "env_keys": [
+    "RENDER_API_KEY"
+  ]
+}

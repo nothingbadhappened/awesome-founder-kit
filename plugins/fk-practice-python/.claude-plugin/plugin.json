@@ -1,0 +1,14 @@
+{
+  "name": "fk-practice-python",
+  "version": "0.1.0",
+  "description": "Python practices: idioms, pytest, Django patterns, Django security, Django testing, FastAPI.",
+  "author": {
+    "name": "Founder Kit maintainers"
+  },
+  "license": "MIT",
+  "keywords": [
+    "founder-kit",
+    "practice-pack",
+    "python"
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "provider": "replicate",
+  "name": "Replicate",
+  "spend_model": "usage",
+  "hard_cap": "no",
+  "how_to_set": [
+    "New accounts cannot set a spend limit since July 2025. Use prepaid credit if offered on your account, and watch the dashboard.",
+    "Use one API token per app; delete it to stop spending."
+  ],
+  "kill_switch": "Delete the API token; cancel running predictions and stop deployments (deployments with min instances bill while idle).",
+  "traps": [
+    "Deployments with min instances above 0 bill all the time",
+    "Long video models bill per second of GPU",
+    "Spend limit setting no longer available to new customers"
+  ],
+  "billing_safety_score": 4,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://replicate.com/changelog/2022-10-17-set-a-monthly-spend-limit",
+    "https://replicate.com/pricing"
+  ],
+  "unverified": [
+    "Whether prepaid credit is available on new accounts"
+  ],
+  "signup": "https://replicate.com/signin",
+  "billing_url": "https://replicate.com/account/billing",
+  "readback": null,
+  "detect": {
+    "files": [],
+    "deps": [
+      "replicate"
+    ]
+  },
+  "env_keys": [
+    "REPLICATE_API_TOKEN"
+  ]
+}

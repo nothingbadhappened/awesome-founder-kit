@@ -1,0 +1,44 @@
+{
+  "provider": "cloudflare",
+  "name": "Cloudflare",
+  "spend_model": "usage",
+  "hard_cap": "partial",
+  "how_to_set": [
+    "Free plan: limits are hard (requests fail above the daily quota).",
+    "Paid: Manage Account > Billing > Billable Usage > Budget alerts (or Notifications > Add > Budget Alert) at your amount.",
+    "Deploy the KV kill-switch snippet from infra/budgets/cloudflare so you can stop traffic with one command."
+  ],
+  "kill_switch": "A KV flag checked by the Worker returns 503 when set: wrangler kv key put --binding=FK_FLAGS KILL on.",
+  "traps": [
+    "Paid plan has no automatic pause; overage bills",
+    "Budget alerts are on projected spend and can arrive late",
+    "Durable Objects duration and R2 Class A operations",
+    "Workers $5/month minimum on the paid plan"
+  ],
+  "billing_safety_score": 5,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://developers.cloudflare.com/workers/platform/pricing/",
+    "https://developers.cloudflare.com/changelog/product/workers/"
+  ],
+  "unverified": [
+    "No official statement found that a paid-plan hard spending cap does not exist"
+  ],
+  "signup": "https://dash.cloudflare.com/sign-up",
+  "billing_url": "https://dash.cloudflare.com/?to=/:account/billing",
+  "readback": null,
+  "detect": {
+    "files": [
+      "wrangler.toml",
+      "wrangler.jsonc",
+      "wrangler.json"
+    ],
+    "deps": [
+      "wrangler"
+    ]
+  },
+  "env_keys": [
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID"
+  ]
+}

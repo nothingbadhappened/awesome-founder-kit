@@ -1,0 +1,55 @@
+{
+  "provider": "aws",
+  "name": "Amazon Web Services",
+  "spend_model": "usage",
+  "hard_cap": "partial",
+  "how_to_set": [
+    "New account: choose the Free plan at sign-up (credits only, no charges until you upgrade).",
+    "Paid account: Billing and Cost Management > Budgets > Create budget (monthly cost, your amount, email alerts at 80% actual and 100% forecast).",
+    "Add a Budget Action on the same budget: apply the deny policy from infra/budgets/aws (stops new compute and storage) at 100%.",
+    "Where offered: AWS Settings (settings.aws.com) > Billing > Spend limit, with \"Stop new resource launches\" on.",
+    "CLI: aws budgets create-budget --account-id <id> --budget file://infra/budgets/aws/budget.json --notifications-with-subscribers file://infra/budgets/aws/notifications.json"
+  ],
+  "kill_switch": "Budget Action applies an IAM deny policy (or stops EC2/RDS) at the threshold; existing running resources still bill until stopped.",
+  "traps": [
+    "NAT gateways bill per hour and per GB even when idle",
+    "Public IPv4 addresses bill per hour, attached or not",
+    "EBS snapshots and unattached volumes",
+    "CloudWatch Logs with no retention",
+    "Data transfer out",
+    "Billing data lags by hours, so alerts arrive late",
+    "Leaked access keys used for crypto mining",
+    "Resources left in a forgotten region"
+  ],
+  "billing_safety_score": 4,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-controls.html",
+    "https://docs.aws.amazon.com/accounts/latest/reference/update-spend-limit.html",
+    "https://aws.amazon.com/free/"
+  ],
+  "unverified": [
+    "AWS Settings spend limit is in limited release; availability for a given account is unverified"
+  ],
+  "signup": "https://portal.aws.amazon.com/billing/signup",
+  "billing_url": "https://console.aws.amazon.com/billing/home#/budgets",
+  "readback": "aws budgets describe-budgets",
+  "detect": {
+    "files": [
+      "samconfig.toml",
+      "cdk.json",
+      "serverless.yml"
+    ],
+    "deps": [
+      "aws-sdk",
+      "@aws-sdk/client-s3",
+      "boto3"
+    ],
+    "tf": "aws"
+  },
+  "env_keys": [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION"
+  ]
+}

@@ -36,6 +36,7 @@ Acceptance = missing gates in order: runner + config + env example â†’ `check` â
 ## Autonomy
 - Unreviewed early run: `Review status: early-unreviewed`; never called done.
 - Non-negotiables go in a subagent's first prompt.
+- Unattended OMC runs (ralph, autopilot, ultragoal, headless) start with `OMC_BUDGET_ENFORCE=active`, so OMC stops at the token budget.
 - Stop and ask: R3 merges; production data; new paid service/vendor; cost change > {{cost_threshold}}/month; superseding an ADR; relaxing a rule; merge to main; irreversible actions (deletes, force-push, publishing, prod deploy).
 
 ## Changelog

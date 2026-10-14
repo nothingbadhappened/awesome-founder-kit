@@ -1,0 +1,14 @@
+{
+  "name": "fk-practice-rust",
+  "version": "0.1.0",
+  "description": "Rust practices: idiomatic patterns and testing.",
+  "author": {
+    "name": "Founder Kit maintainers"
+  },
+  "license": "MIT",
+  "keywords": [
+    "founder-kit",
+    "practice-pack",
+    "rust"
+  ]
+}

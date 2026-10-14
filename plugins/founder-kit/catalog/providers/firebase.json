@@ -1,0 +1,41 @@
+{
+  "provider": "firebase",
+  "name": "Firebase",
+  "spend_model": "usage",
+  "hard_cap": "partial",
+  "how_to_set": [
+    "Stay on the Spark plan (hard free limits) until you need Blaze.",
+    "Blaze: it bills through Google Cloud; set a budget and the billing-disable function exactly as for gcp (fk budget plan gcp <usd>)."
+  ],
+  "kill_switch": "Same as Google Cloud: budget Pub/Sub function unlinks billing.",
+  "traps": [
+    "Blaze has no cap",
+    "Firestore read loops from client listeners",
+    "Cloud Functions triggering themselves",
+    "Storage egress",
+    "No App Check, so abuse runs up usage"
+  ],
+  "billing_safety_score": 4,
+  "verified": "2026-10-14",
+  "sources": [
+    "https://firebase.google.com/pricing",
+    "https://firebase.google.com/docs/projects/billing/avoid-surprise-bills"
+  ],
+  "unverified": [],
+  "signup": "https://console.firebase.google.com/",
+  "billing_url": "https://console.firebase.google.com/project/_/usage/details",
+  "readback": "gcloud billing budgets list",
+  "detect": {
+    "files": [
+      "firebase.json",
+      ".firebaserc"
+    ],
+    "deps": [
+      "firebase",
+      "firebase-admin"
+    ]
+  },
+  "env_keys": [
+    "FIREBASE_PROJECT_ID"
+  ]
+}

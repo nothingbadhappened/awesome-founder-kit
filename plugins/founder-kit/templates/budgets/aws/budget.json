@@ -1,0 +1,6 @@
+{
+  "BudgetName": "{{PROJECT}}-monthly",
+  "BudgetLimit": { "Amount": "{{USD}}", "Unit": "USD" },
+  "BudgetType": "COST",
+  "TimeUnit": "MONTHLY"
+}

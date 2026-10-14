@@ -1,0 +1,14 @@
+{
+  "name": "fk-practice-jvm",
+  "version": "0.1.0",
+  "description": "JVM practices: Spring Boot patterns, security and testing; Kotlin patterns, coroutines/Flow and testing; Quarkus.",
+  "author": {
+    "name": "Founder Kit maintainers"
+  },
+  "license": "MIT",
+  "keywords": [
+    "founder-kit",
+    "practice-pack",
+    "jvm"
+  ]
+}
