@@ -1,12 +1,18 @@
 {
   "schema": 1,
   "checked": "2026-10-14",
-  "note": "The only list of versions the kit trusts. install/install.ps1, install/install.sh and `fk setup` install exactly these; tests/setup.test.mjs fails when a script drifts from this file. min = below this is red; version = the tested pin (older but >= min is yellow, newer is kept). exact = both install scripts install exactly this version (or commit); git, node and gh come from the OS package manager at its current release, checked against min.",
+  "note": "The only list of versions the kit trusts. install/install.ps1, install/install.sh and `fk setup` install exactly these; tests/setup.test.mjs fails when a script drifts from this file. min = below this is red; version = the tested pin (older but >= min is yellow, newer is kept). exact = both install scripts install exactly this version (or commit); git, git-lfs, node, podman and mise come from the OS package manager (winget pins the version; brew/apt/dnf give their current release), checked against min; just (and gh outside Windows and Homebrew) come pinned through mise.",
   "tools": {
     "git": {
       "min": "2.30.0",
       "version": "2.55.0",
       "source": "winget Git.Git | xcode-select / brew | apt / dnf"
+    },
+    "git-lfs": {
+      "min": "3.0.0",
+      "version": "3.8.0",
+      "source": "winget GitHub.GitLFS (also bundled with Git for Windows) | brew git-lfs | apt / dnf / pacman git-lfs",
+      "config": "git lfs install (user level)"
     },
     "node": {
       "min": "20.0.0",
@@ -19,6 +25,38 @@
       "source": "https://astral.sh/uv/0.13.0/install.(sh|ps1)",
       "exact": true
     },
+    "mise": {
+      "min": "2024.1.0",
+      "version": "2026.9.18",
+      "source": "winget jdx.mise | https://mise.run with MISE_VERSION=v<version> | brew mise",
+      "activation": "agents use mise exec / mise x; the founder may add mise activate to the shell profile"
+    },
+    "just": {
+      "min": "1.15.0",
+      "version": "1.58.0",
+      "source": "mise use -g just@<version> (after the mise step when mise is installed in the same run) | winget Casey.Just / brew / apt only when mise cannot be installed"
+    },
+    "podman": {
+      "min": "4.9.0",
+      "version": "5.8.3",
+      "source": "winget RedHat.Podman (needs WSL2) | brew podman | apt / dnf / pacman podman (apt below the floor: a founder note, never re-planned; Ubuntu 24.04+ / Debian 13+ or podman.io packages)",
+      "docker_ok": true,
+      "machine": {
+        "cpus": 2,
+        "memory_mib": 2048
+      },
+      "note": "An existing Docker counts: Podman is never added next to a working Docker. Windows and macOS run containers in a small Linux machine (podman machine)."
+    },
+    "podman-compose": {
+      "min": "1.0.6",
+      "version": "1.6.0",
+      "source": "uv tool install podman-compose==<version> (only when neither Docker nor docker-compose is present); Windows: winget Docker.DockerCompose (podman compose prefers docker-compose; Podman Desktop sets up the same binary)",
+      "exact": true,
+      "windows": {
+        "winget": "Docker.DockerCompose",
+        "version": "2.40.3"
+      }
+    },
     "claude-code": {
       "min": "2.1.0",
       "version": "2.1.296",
@@ -26,10 +64,10 @@
       "exact": true
     },
     "gh": {
-      "optional": true,
       "min": "2.40.0",
       "version": "2.102.0",
-      "source": "winget GitHub.cli | brew gh"
+      "source": "winget GitHub.cli | brew gh | mise use -g gh@<version> elsewhere (apt ships gh below the floor, e.g. 2.4.0 on Ubuntu 22.04)",
+      "auth": "founder action: gh auth login (never run for them)"
     },
     "oh-my-claudecode": {
       "version": "5.7.2",
@@ -74,7 +112,7 @@
       "exact": true
     },
     "founder-kit": {
-      "version": "0.6.0",
+      "version": "0.7.0",
       "marketplace": "nothingbadhappened/awesome-founder-kit",
       "plugin": "founder-kit@awesome-founder-kit"
     }

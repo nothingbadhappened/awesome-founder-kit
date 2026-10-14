@@ -112,6 +112,7 @@ Results: `clean`, `adapted (how)`, `isolated (how)`, `rejected (why)`. A candida
 ## Environment
 
 `environment` in the draft: `runtimes` (`[{"name":"python","version":"3.12.7","via":"uv","scope":"project-local"}]`), `isolation` (`none`, `project-local`, `container`, `WSL2` or `VM`; the highest the OS allows for untrusted or system-wide tools), `isolation_steps` (plain words, time needed), `env_vars` (names only; provisioning adds them to `.env.example`), `ports`, `disk` ("about 12 GB"), `verify` (commands run after provisioning, per OS allowed).
+Prefer runtimes pinned per project in mise (`"via":"mise"`, exact versions in `.mise.toml`) and services (databases, caches, queues) as containers in `compose.yaml` (Podman, or the founder's Docker) over machine-wide installs: the project must run from a fresh clone with `just setup`.
 
 ## Entry
 

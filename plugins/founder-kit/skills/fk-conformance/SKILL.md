@@ -16,7 +16,9 @@ Accepted ADRs in `docs/adr/` (which statuses count: reference.md §Read), `docs/
 3. **New decision without an ADR?** A new dependency, vendor, data store, boundary, protocol, or a reversed pattern. Severity medium (high if R3). Fix: name the ADR to write (title, decision, alternatives).
 4. **Boundary rule not yet a gate?** An ADR or standard states a boundary, layering, banned dependency or data rule `<runner> check` does not enforce. Fix: propose the gate (tool, rule, the planted violation that turns it red) as a separate reviewed task; never weaken a gate.
 5. **Bible behind?** An accepted ADR's `bible:` sections of `docs/PROJECT.md` (index mode: the linked source doc) not updated in the same task (`fk bible check` lists them). Severity medium. Fix: update them, then `fk bible touch <section>`.
-6. **Red line crossed?** Anything against `00-constraints.md`. Severity critical; stop and ask the founder.
+6. **Portable?** No machine-specific paths or tools; a new tool is pinned in `.mise.toml`, a new service is in `compose.yaml` (`fk portability check`). Severity medium.
+7. **A doc contradicts an accepted ADR or standard?** New or edited docs and agent rule files must not (`fk knowledge check` flags likely contradictions; it may miss differently-worded ones). Severity medium. Fix: correct the doc, or a superseding ADR.
+8. **Red line crossed?** Anything against `00-constraints.md`. Severity critical; stop and ask the founder.
 
 ## Verdict file (tasks with `docs/tasks/<id>.md`)
 Save `docs/tasks/<id>.review-<n>.md` (next free n) yourself with one shell command; reviewer agents have no Write tool. Never hand the text to the main session: a review it writes does not count.

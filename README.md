@@ -4,11 +4,11 @@ Build a real product with AI agents when you are **not** a programmer. You decid
 
 [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) (OMC) runs the development workflow: planning, building, verifying and reviewing. The kit never replaces it. It adds what OMC does not do: the founder layer (idea, review, decisions, brand, journal), tool research and setup for any kind of project, light checks that the work follows what was agreed, and guards for secrets, spending and cleanup.
 
-> Status: **v0.6**. The rules come from real projects, including the mistakes. Expect changes.
+> Status: **v0.7**. The rules come from real projects, including the mistakes. Expect changes.
 
 ## Install
 
-One command installs everything the kit needs: git, Node.js, uv, Claude Code, oh-my-claudecode, codebase-memory-mcp, MemPalace, NVIDIA SkillSpector and gitleaks. All are free.
+One command installs everything the kit needs: git with Git LFS, Node.js, uv, mise, just, Podman (an existing Docker is kept instead), the GitHub CLI, Claude Code, oh-my-claudecode, codebase-memory-mcp, MemPalace, NVIDIA SkillSpector and gitleaks. All are free. Podman with its small Linux machine takes about 1–2 GB. On Windows it needs WSL2 (administrator rights and a restart): that step and signing in to GitHub (`gh auth login`) are yours; the plan shows the exact commands and `fk actions` keeps them on your list.
 
 **Windows** (PowerShell):
 
@@ -20,7 +20,7 @@ One command installs everything the kit needs: git, Node.js, uv, Claude Code, oh
 
 The installer checks what you already have, shows one plan in plain words (what, why, size), asks once, installs only what is missing, sets each tool up and checks that it works. It never uninstalls or downgrades anything and is safe to run again. Every change is logged with an undo hint in `~/.fk/install-ledger.jsonl`. Exact versions come from `plugins/founder-kit/compat.lock.json`.
 
-Options: preview with `-DryRun` / `--dry-run`; skip the question with `-Yes` / `--yes`; add the GitHub CLI with `-WithGh` / `--with-gh`. When piping, use `$env:FK_DRY_RUN='1'` (Windows) or `| bash -s -- --dry-run`.
+Options: preview with `-DryRun` / `--dry-run`; skip the question with `-Yes` / `--yes`. When piping, use `$env:FK_DRY_RUN='1'` (Windows) or `| bash -s -- --dry-run`.
 
 Already have Claude Code? Inside it:
 
@@ -46,6 +46,8 @@ Open Claude Code in an empty folder (or in a project you already have) and say *
 | 8. Build | your project skill + OMC | The first task builds the safety checks themselves |
 
 Already have a project? `fk-adopt` surveys it read-only, reconstructs the decisions, records today's quality as a baseline that may only improve, and leaves work in progress alone.
+
+Its docs, agent rule files (CLAUDE.md, .cursorrules, ...), notes and Claude memory are read first: agents find contradictions, duplicates and stale items, the newer statement wins unless you decide otherwise (you are asked in plain words only where dates cannot settle it), and the result becomes the kit's bible, decisions, standards and lessons, with a map of where each older doc went. Your original docs are only marked "consolidated into ..." if you agree; agent rule files are never rewritten. Later, `fk knowledge check` flags new docs that likely contradict what was decided (it may miss differently-worded ones).
 
 While building:
 - **Conformance:** reviewers load `fk-conformance` and check each change against your decisions and standards; boundary rules become automatic checks.
@@ -98,6 +100,7 @@ Optional extras for common stacks, loaded only when needed: `fk-practice-core` (
 7. **Security in every task:** "What could a bad actor do here?" plus a test proving it's blocked.
 8. **Nothing left running, no surprise bills:** label what you start, sweep by label, cap spend at the provider when you use paid cloud or API services.
 9. **Log failures honestly.** That's where the method improves.
+10. **Portable from day one:** a fresh clone on any machine runs with `just setup` and `just check`: tool versions pinned (mise), services in containers (compose), nothing machine-specific. `fk portability check` shows the gaps.
 
 ## What the guards are (and are not)
 The kit's guards are **light**: regex-based speed bumps that stop an agent drifting from what was agreed (reading `.env`, writing a secret, loosening a check, an unapproved install, an unbudgeted deploy, skipping git hooks) and log it in the kit's own state folder outside the repo (`~/.fk/state/`). They never block OMC's workflow. They are not a sandbox and will not stop a determined attacker. Approvals count only when you type them yourself as the whole message (`fk-approve ...`, `fk-override ...`). `fk audit` summarizes what happened in plain words.

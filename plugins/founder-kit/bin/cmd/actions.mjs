@@ -4,7 +4,7 @@
 // what the kit can check (it reads provider caps back) and ticks those items.
 import fs from 'node:fs';
 import path from 'node:path';
-import { sanctionedJson, readJson, readLog } from '../../hooks/lib.mjs';
+import { sanctionedJson, readJson, readLog, fkHome } from '../../hooks/lib.mjs';
 import { needFkRoot, catalog, canonical, say } from './steward/lib.mjs';
 import { parseFlags } from './ledger.mjs';
 import { checkProvider } from './budget.mjs';
@@ -108,6 +108,10 @@ export function buildItems(root, { extra = [], prev } = {}) {
     if (c.hard_cap !== 'yes') items.push({ id: `accept:${p}`, text: `${c.name} has ${c.hard_cap === 'no' ? 'no hard cap' : 'only a partial cap'} (alerts can arrive after the money is spent). Approve using it anyway by writing why.`, reason: true, check: 'ticked when you write a reason', auto: null });
     return items;
   }));
+
+  // Machine steps `fk setup` cannot take (admin rights and a restart, a browser sign-in), from its cached status.
+  const machine = Object.values(readJson(path.join(fkHome(), 'base-tools.json'), {}).tools || {}).flatMap((t) => t?.founder || []).sort((a, b) => !!b.blocking - !!a.blocking);
+  S('This computer (steps only you can take)', machine.map((f) => ({ id: `machine:${f.id}`, text: f.text, check: 'fk setup checks it again and drops this line once done', auto: null })));
 
   const apiKey = !!process.env.ANTHROPIC_API_KEY;
   S('Claude subscription or API key', [{ id: 'claude:billing',

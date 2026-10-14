@@ -120,6 +120,8 @@ async function doctor(withHooks) {
   if (gl.status === 0) add('gitleaks >= 8.19', glOk, glOk ? glv : `${glv || gl.stdout.trim()}: too old for \`gitleaks git\` in the pre-commit hook. Update gitleaks.`);
   else add('gitleaks', 'yellow', 'not found: commits are not scanned for secrets. Install a pinned version: winget install Gitleaks.Gitleaks, brew install gitleaks, or a release binary from github.com/gitleaks/gitleaks/releases');
   await omcRows(add);
+  const { doctorRows } = await import('./cmd/setup/core.mjs');
+  for (const [level, item, note] of doctorRows()) add(item, level, note);
   const root = repoRoot();
   const hasFk = !!(root && fs.existsSync(path.join(root, '.fk')));
   add('project .fk/', hasFk || 'yellow', hasFk ? root : `${root ? 'absent' : 'not in a git repo'} (expected before fk init)`);
@@ -196,6 +198,8 @@ async function audit() {
   const d = await drift(root);
   if (d.lines.length) { say('fk audit: decisions, lessons and the bible have drifted:'); for (const l of d.lines) say(`- ${l}`); }
   else if (d.checked) say('fk audit: decisions, lessons and the bible are in step with the work.');
+  const kc = await (await import('./cmd/knowledge.mjs')).check(root);
+  if (kc.clusters?.length) say(`fk audit: ${kc.clusters.length} statement(s) in docs changed since the knowledge consolidation may contradict accepted decisions or standards (fk knowledge check).`);
   if (!rows.length) return say('fk audit: nothing logged yet.');
   const count = (pred) => rows.filter(pred).length;
   say(`fk audit: ${rows.length} entries since ${rows[0]?.ts ?? '-'}.`);

@@ -19,6 +19,7 @@ OMC's verifier checks these with evidence (output, link, path) in the task file.
 - [ ] Threat model (R2/R3 or entry points) with a passing negative test per threat.
 - [ ] Reviews for the risk class done; critical/high/medium resolved; `Review status: reviewed`.
 - [ ] `<runner> setup && <runner> up` works from a clean clone.
+- [ ] `fk portability check`: no new warning (tools pinned in mise, services in compose, no machine paths).
 - [ ] `<runner> sweep` list empty; nothing left running.
 - [ ] Docs, ADRs, module READMEs updated.
 - [ ] `fk task done <id>` passed (or the founder typed an override).

@@ -69,7 +69,8 @@ export function parseAdr(text, file) {
   else if (/accepted|auto-decided/i.test(rawStatus)) status = 'accepted';
   else if (/reconstructed/i.test(rawStatus)) status = 'reconstructed';
   else if (/rejected|deprecated/i.test(rawStatus)) status = 'rejected';
-  const sup = fm.supersedes ? [].concat(fm.supersedes).flatMap(ids) : ids(/\bsupersedes\s*:?\s*((?:(?:ADR-?)?\d{1,4}[\s,]*(?:and\s+)?)+)/i.exec(body)?.[1]);
+  // supersedes: ADR ids; a source location ("README.md §Vision", from a knowledge consolidation) is not an ADR.
+  const sup = fm.supersedes ? [].concat(fm.supersedes).filter((s) => !/§|\/|\.\w{1,8}\b/.test(String(s))).flatMap(ids) :ids(/\bsupersedes\s*:?\s*((?:(?:ADR-?)?\d{1,4}[\s,]*(?:and\s+)?)+)/i.exec(body)?.[1]);
   const fit = [].concat(fm.fit ?? []).filter((r) => r && typeof r === 'object' && !Array.isArray(r));
   const rawDate = String(fm.date || /\bDate:\s*(\d{4}-\d{2}-\d{2})/.exec(body)?.[1] || '').slice(0, 10);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) && !Number.isNaN(Date.parse(rawDate)) ? rawDate : null; // a placeholder is no date

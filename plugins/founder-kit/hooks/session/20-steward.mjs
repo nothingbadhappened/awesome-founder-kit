@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fingerprint, readLedger, expired, readState, writeState, DAY } from '../../bin/cmd/steward/lib.mjs';
+import { readJson, fkHome } from '../lib.mjs';
 
 const age = (iso, now) => (iso ? now - Date.parse(iso) : Infinity);
 
@@ -23,7 +24,10 @@ export default function steward(ctx) {
     }
     const lastCare = Math.max(age(run.sweep || s.first_seen, now), age(run.budget_check || s.first_seen, now));
     if (lastCare >= 7 * DAY && age(note.weekly, now) >= 7 * DAY) {
-      return say('weekly', 'fk steward: weekly upkeep is due. Run `fk sweep --dry-run` (leftover servers, containers, worktrees) and `fk budget check` (are the billing caps still set?). Load fk-steward for details.');
+      // The Podman machine status comes from the cache fk setup / fk doctor wrote: no process on this path.
+      const machine = readJson(path.join(fkHome(), 'base-tools.json'), {})?.tools?.podman?.machine;
+      const vm = machine?.running ? ' The Podman machine was running at the last check (it holds memory while idle): if no containers are needed, stop it with `podman machine stop`.' : '';
+      return say('weekly', `fk steward: weekly upkeep is due. Run \`fk sweep --dry-run\` (leftover servers, containers, worktrees) and \`fk budget check\` (are the billing caps still set?).${vm} Load fk-steward for details.`);
     }
     let scouted = s.first_seen;
     try { scouted = fs.statSync(path.join(root, '.fk', 'toolchain.json')).mtime.toISOString(); } catch { /* no toolchain yet */ }

@@ -23,6 +23,7 @@ fk ledger add <kind> <id> [--pid N] [--port N] [--ttl 2h] [--label k=v] [--data]
 2. `fk sweep` stops processes, removes containers, merged clean worktrees and temp folders from this project's ledger or label. Never by name.
 3. Volumes and other data: only `fk sweep --include-data`, and only after the founder said yes (AskUserQuestion).
 4. Cloud resources are listed, never deleted by the kit. Deleting cloud resources not in the ledger is the founder's call.
+5. Containers work the same with Podman or Docker (`fk sweep` uses whichever is there). The Podman machine (Windows, macOS) holds memory while idle: when no containers are needed, `podman machine stop` (`fk doctor` shows whether it runs). Never `podman machine rm` or `reset` without the founder's yes: it deletes every container and volume in it.
 
 ## 3. Cloud budgets
 - Before the first paid resource on a provider: `fk budget plan <provider> <usd>`. It prints the steps and writes budget-as-code into `infra/budgets/<provider>/`. You never apply it; the founder runs `terraform apply`/console steps.

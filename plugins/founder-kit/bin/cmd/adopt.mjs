@@ -1,23 +1,28 @@
 // fk adopt survey | draft | plan | apply | where  (§4.1: adopting a project already in progress)
-//   survey [--run name=cmd]... [--days 90] [--min-pair 3] [--session-cap 10] [--skip gitleaks,docker,sessions]
+//   survey [--run name=cmd]... [--days 90] [--min-pair 3] [--session-cap 10] [--skip gitleaks,docker,sessions,portability]
 //   draft <name> [--from <file>]   write <workspace>/drafts/<name> (from a file, or stdin)
 //   plan                           health report + remediation draft from the survey -> <workspace>/drafts/health.md
-//   apply                          after the founder's yes: fk init, confirmed drafts into docs/, pre-existing ledger, baseline
+//   apply [--annotate]             after the founder's yes: fk init, confirmed drafts into docs/, pre-existing ledger, baseline;
+//                                  --annotate (founder approval) adds one header line to each consolidated original doc
 //   where                          print the workspace folder
+//   knowledge <step>               consolidate the project's own docs, rules and notes (adopt/knowledge.mjs, adopt/compile.mjs)
 // Until apply nothing in the repo changes (A1): the workspace lives in the kit state dir, outside the repo.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readJson, writeJson, loadConfig, stateDir } from '../../hooks/lib.mjs';
-import { say, needRoot, parseArgs, git, slug } from './adopt/util.mjs';
+import { readJson, writeJson, loadConfig, stateDir, stateFile } from '../../hooks/lib.mjs';
+import { APPLIED, sha1 } from './knowledge.mjs';
+import { say, needRoot, parseArgs, git, slug, today } from './adopt/util.mjs';
 import { survey, surveyMd, sessionsDir } from './adopt/survey.mjs';
 import { record } from './baseline.mjs';
 import { fingerprint, readLedger, appendLedger } from './steward/lib.mjs';
 import { claudeMdLines } from './lessons.mjs';
 import { recordMode } from './bible.mjs';
+import knowledge from './adopt/knowledge.mjs';
+import { compiledDraft, appendDraft, annotate, MAP } from './adopt/compile.mjs';
 
-const USAGE = 'usage: fk adopt survey [--run name=cmd]... [--skip gitleaks,docker,sessions] | fk adopt draft <name> [--from file] | fk adopt plan | fk adopt apply | fk adopt where';
+const USAGE = 'usage: fk adopt survey [--run name=cmd]... [--skip gitleaks,docker,sessions,portability] | fk adopt draft <name> [--from file] | fk adopt plan | fk adopt apply [--annotate] | fk adopt where | fk adopt knowledge <inventory|extract|candidates|verdict|report|resolve|compile>';
 export const adoptDir = (root) => path.join(stateDir(root), 'adopt');
 function put(root, rel, value) {
   const abs = path.join(adoptDir(root), rel);
@@ -57,6 +62,8 @@ function risks(s) {
   if (!st.test_files) r.push(['R1', 'tests', 'No automated tests were found.']);
   if (!st.ci.length) r.push(['R1', 'checks', 'Nothing checks each change automatically (no CI).']);
   for (const c of (g.fix_chains || []).slice(0, 3)) r.push(['R1', 'fragile area', `${c.length} fixes in a row on ${c.files.slice(0, 3).join(', ')}: add tests there before changing it again.`]);
+  const gaps = (s.portability?.items || []).filter((i) => i.status === 'warn');
+  if (gaps.length) r.push(['R1', 'portability', `A fresh clone may not run on another machine: ${gaps.map((i) => i.label.toLowerCase()).join(', ')} (details: fk portability check).`]);
   if (g.reverts?.count) r.push(['R1', 'stability', `${g.reverts.count} change(s) had to be reverted.`]);
   for (const [n, run] of Object.entries(s.runs || {})) if (run.exit !== 0) r.push(['R1', 'gates', `"${n}" fails today (${run.value} problem(s)); recorded as the baseline, not fixed in one go.`]);
   return r.sort((a, b) => b[0].localeCompare(a[0]));
@@ -92,7 +99,8 @@ ${rs.length ? rs.map(([lvl, area, text]) => `- [ ] ${lvl} ${area}: ${text}`).joi
 
 function targets(root) {
   const c = loadConfig(root).paths;
-  return [['00-constraints.md', c.constraints], ['PROJECT.md', 'docs/PROJECT.md'], ['lessons.md', 'docs/process/lessons.md'], ['impact-map.yaml', 'docs/standards/impact-map.yaml'], ['adr', c.adr]];
+  return [['00-constraints.md', c.constraints], ['PROJECT.md', 'docs/PROJECT.md'], ['lessons.md', 'docs/process/lessons.md'], ['impact-map.yaml', 'docs/standards/impact-map.yaml'], ['adr', c.adr],
+    ['standards', c.standards], ['knowledge-map.md', MAP]];
 }
 
 function apply(root, flags) {
@@ -111,25 +119,43 @@ function apply(root, flags) {
   for (const [src, dst] of targets(root)) {
     const from = path.join(drafts, src);
     if (!fs.existsSync(from)) continue;
-    const items = fs.statSync(from).isDirectory() ? fs.readdirSync(from).map((f) => [path.join(from, f), `${dst}/${f}`]) : [[from, dst]];
-    for (const [a, rel] of items) {
+    const items = fs.statSync(from).isDirectory() ? fs.readdirSync(from).map((f) => [path.join(from, f), `${dst}/${f}`, `${src}/${f}`]) : [[from, dst, src]];
+    for (const [a, rel, name] of items) {
+      if (fs.existsSync(path.join(root, rel)) && !dirty.has(rel) && compiledDraft(root, name)) { // consolidated knowledge: appended and marked, never replaced
+        say(appendDraft(path.join(root, rel), name, fs.readFileSync(a, 'utf8'), today(flags)) ? `merged  ${rel} (appended under a review marker)` : `kept    ${rel} (already holds the consolidated entries)`);
+        continue;
+      }
       if (fs.existsSync(path.join(root, rel)) || dirty.has(rel)) { say(`kept    ${rel} (already there; draft left in ${drafts})`); continue; }
       fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
       fs.copyFileSync(a, path.join(root, rel));
       say(`created ${rel}`);
     }
   }
+  // Original docs: one header line each, only with the founder's yes (--annotate); agent rule files are never rewritten.
+  const added = {}; // lines apply adds to project docs: the baseline for fk knowledge check, never new claims
+  if (flags.annotate) for (const n of annotate(root, dirty, today(flags))) { say(`noted   ${n.file}: ${n.header}`); added[n.file] = [n.header]; }
+  else if (fs.existsSync(path.join(root, MAP))) say('fk adopt: original docs left untouched. With the founder\'s yes, fk adopt apply --annotate adds one "consolidated into" line to each.');
   // The bible's one CLAUDE.md line, within the 40-line budget; an uncommitted CLAUDE.md is work in progress (A6).
   if (fs.existsSync(path.join(root, 'docs', 'PROJECT.md'))) {
     const md = path.join(root, 'CLAUDE.md');
     const text = fs.existsSync(md) ? fs.readFileSync(md, 'utf8') : '';
-    const index = s.stack?.north_star?.length || /^Source of truth:/im.test(fs.readFileSync(path.join(root, 'docs', 'PROJECT.md'), 'utf8'));
+    const kc = readJson(path.join(adoptDir(root), 'knowledge', 'compiled.json'), null); // a consolidated bible says its own mode
+    const index = kc?.out === 'drafts' && kc.bible_mode ? kc.bible_mode === 'index'
+      : s.stack?.north_star?.length || /^Source of truth:/im.test(fs.readFileSync(path.join(root, 'docs', 'PROJECT.md'), 'utf8'));
     recordMode(root, index ? 'index' : 'own');
     say(`bible   docs/PROJECT.md mode: ${index ? `index (source of truth: ${(s.stack?.north_star || []).map((d) => d.file).join(', ') || 'the linked docs'})` : 'own'}`);
     if (text.includes('docs/PROJECT.md')) say('kept    CLAUDE.md (already points at docs/PROJECT.md)');
     else if (dirty.has('CLAUDE.md')) say('fk adopt: CLAUDE.md has uncommitted changes; add this line yourself later: Project bible: docs/PROJECT.md — read it first.');
     else if (claudeMdLines(root) >= 40) say('fk adopt: CLAUDE.md is at its 40-line budget; merge a line, then add: Project bible: docs/PROJECT.md — read it first.');
-    else { fs.writeFileSync(md, `${text}${text && !text.endsWith('\n') ? '\n' : ''}Project bible: docs/PROJECT.md — read it first.\n`); say('added   CLAUDE.md line: Project bible: docs/PROJECT.md — read it first.'); }
+    else { fs.writeFileSync(md, `${text}${text && !text.endsWith('\n') ? '\n' : ''}Project bible: docs/PROJECT.md — read it first.\n`); say('added   CLAUDE.md line: Project bible: docs/PROJECT.md — read it first.'); added['CLAUDE.md'] = ['Project bible: docs/PROJECT.md — read it first.']; }
+  }
+  if (fs.existsSync(path.join(root, MAP)) && Object.keys(added).length) {
+    const rec = readJson(stateFile(root, APPLIED), { files: {}, added: {} });
+    for (const [f, lines] of Object.entries(added)) {
+      rec.files[f] = sha1(fs.readFileSync(path.join(root, f), 'utf8'));
+      rec.added[f] = [...new Set([...(rec.added[f] || []), ...lines])];
+    }
+    writeJson(stateFile(root, APPLIED), { ...rec, ts: new Date().toISOString() });
   }
   // Already-running resources: pre-existing, never swept.
   const known = new Set(readLedger(root).map((e) => `${e.kind}:${e.id}`));
@@ -146,7 +172,8 @@ function apply(root, flags) {
 export default async function adopt(args) {
   const { pos, flags } = parseArgs(args);
   const root = needRoot();
-  const sub = { where: () => say(adoptDir(root)), survey: () => doSurvey(root, flags), draft: () => draft(root, pos, flags), plan: () => plan(root), apply: () => apply(root, flags) }[pos[0]];
+  const sub = { where: () => say(adoptDir(root)), survey: () => doSurvey(root, flags), draft: () => draft(root, pos, flags), plan: () => plan(root), apply: () => apply(root, flags),
+    knowledge: () => knowledge(root, pos.slice(1), flags) }[pos[0]];
   if (sub) return sub();
   say(USAGE); process.exitCode = 1;
 }

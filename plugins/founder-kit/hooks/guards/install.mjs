@@ -24,6 +24,8 @@ function parse(tok) {
   if (a === 'uv' && b === 'tool' && c === 'install') return { kind: 'pkg', args: after(3) };
   if (a === 'pipx' && b === 'install') return { kind: 'pkg', args: after(2).slice(0, 1) };
   if (['cargo', 'go'].includes(a) && b === 'install') return { kind: 'pkg', args: after(2) };
+  // mise: a project pin (`mise use node@22`, `mise install`) is project config; only the user-wide -g/--global is a tool install.
+  if (a === 'mise' && b === 'use' && (t.includes('-g') || t.includes('--global'))) return { kind: 'pkg', args: after(2) };
   if (['winget', 'brew', 'choco', 'scoop'].includes(a) && ['install', 'add'].includes(b)) return { kind: 'pkg', args: after(2), mgr: a };
   if (a === 'claude' && b === 'mcp' && c === 'add') return { kind: 'mcp', args: after(3) };
   if (a === 'claude' && b === 'plugin' && (c === 'install' || c === 'i')) return { kind: 'plugin', args: after(3) };

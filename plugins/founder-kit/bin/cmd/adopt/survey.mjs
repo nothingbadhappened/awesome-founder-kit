@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { git, tool, slug, measure, gitleaks, pairs, many } from './util.mjs';
+import { check as portability } from '../portability.mjs';
 
 const SKIP = new Set(['node_modules', '.git', '.omc', '.fk', 'dist', 'build', 'out', 'coverage', 'target', 'vendor', '.venv', 'venv', '__pycache__', '.next', '.turbo', '.cache', '.godot']);
 const MANIFESTS = /^(package\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|requirements[\w-]*\.txt|pyproject\.toml|Pipfile|setup\.py|go\.mod|Cargo\.toml|pom\.xml|build\.gradle(\.kts)?|Gemfile|composer\.json|.+\.csproj|.+\.sln|project\.godot|pubspec\.yaml|Package\.swift|mix\.exs|deno\.jsonc?)$/i;
@@ -167,6 +168,7 @@ export function survey(root, flags) {
     runs: Object.fromEntries(pairs(flags.run).map(([n, c]) => [n, measure(root, n, c)])),
     gitleaks: skip.has('gitleaks') ? { skipped: true } : gitleaks(root) ?? { installed: false },
     containers: skip.has('docker') ? { skipped: true } : containers(root) ?? { docker: false },
+    portability: skip.has('portability') ? { skipped: true } : portability(root),
     sessions: skip.has('sessions') ? { skipped: true } : sessions(root, Number(flags['session-cap']) || 10),
     mempalace_wing: slug(root),
   };
@@ -213,6 +215,10 @@ ${list(g.fix_chains, (c) => `${c.length} fixes in a row from ${c.from} on ${c.fi
 
 ## Running containers
 ${s.containers.skipped ? '- skipped' : s.containers.docker === false ? '- Docker not available' : `${list(s.containers.related, (c) => `${c.name} (${c.image}): already running, recorded as pre-existing at apply`)}\n- Other containers on this machine (not this project): ${s.containers.unrelated_count}`}
+
+## Portability (does a fresh clone run on another machine?)
+${!s.portability || s.portability.skipped ? '- skipped' : `- ${s.portability.kind} project: ${s.portability.pass} pass, ${s.portability.warn} warn (fk portability check).
+${list(s.portability.items.filter((i) => i.status === 'warn'), (i) => `${i.label}: ${i.note}`)}`}
 
 ## Measured now
 ${runs.length ? runs.map(([n, r]) => `- ${n}: ${r.kind === 'coverage' ? `${r.value ?? '?'}% coverage` : `${r.value} problem(s)`} (exit ${r.exit})`).join('\n') : '- nothing run (no commands were given)'}

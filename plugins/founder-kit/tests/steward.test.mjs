@@ -237,6 +237,49 @@ test('budget check reads a cap back through a (fake) provider CLI and says unver
   } finally { cleanup(p.dir); }
 });
 
+test('sweep uses Podman when Docker is absent: same labels, same rules', () => {
+  const p = project();
+  try {
+    // A PATH with the fake podman and without any docker (a real one on the machine would otherwise win).
+    const bin = path.join(p.dir, 'podbin');
+    fs.mkdirSync(bin);
+    const fake = path.join(p.dir, 'fakebin', 'fake.mjs');
+    fs.writeFileSync(path.join(bin, 'podman.cmd'), `@"${process.execPath}" "${fake}" podman %*\r\n`);
+    fs.writeFileSync(path.join(bin, 'podman'), `#!/bin/sh\nexec "${process.execPath}" "${fake}" podman "$@"\n`, { mode: 0o755 });
+    const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+    const clean = String(process.env[pathKey]).split(path.delimiter).filter((d) => !['docker', 'docker.exe', 'docker.cmd'].some((x) => fs.existsSync(path.join(d, x))));
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PATH'));
+    Object.assign(env, { PATH: [bin, ...clean].join(path.delimiter), FAKE_DOCKER_STATE: p.state, FAKE_LOG: p.log });
+    fs.writeFileSync(p.state, JSON.stringify({
+      containers: [{ id: 'aaaaaaaaaaaa', name: 'ours', labels: [`fk.fingerprint=${p.fp}`] }, { id: 'bbbbbbbbbbbb', name: 'theirs', labels: [`fk.fingerprint=${OTHER_FP}`] }],
+      volumes: [{ name: 'ourdata', labels: [`fk.fingerprint=${p.fp}`] }],
+    }));
+    const sweep = (args) => spawnSync(process.execPath, [FK, 'sweep', ...args], { cwd: p.dir, encoding: 'utf8', env });
+    let r = sweep(['--dry-run']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /would remove container ours \(labelled\)/);
+    assert.match(r.stdout, /volume ourdata \(labelled\): holds data/);
+    assert.doesNotMatch(r.stdout, /theirs|neither Docker nor Podman/);
+    r = sweep([]);
+    assert.match(p.calls(), /^podman rm -f aaaaaaaaaaaa$/m);
+    assert.doesNotMatch(p.calls(), /^docker |bbbbbbbbbbbb|volume rm/m);
+  } finally { cleanup(p.dir); }
+});
+
+test('weekly note mentions a running Podman machine from the cache only', async () => {
+  const p = project();
+  const status = path.join(process.env.FK_HOME, 'base-tools.json');
+  try {
+    const { default: steward } = await import(pathToFileURL(path.join(KIT, 'hooks', 'session', '20-steward.mjs')).href);
+    const t0 = Date.now(), D = 24 * 3600e3;
+    steward({ root: p.dir, now: t0 });
+    writeJson(status, { tools: { podman: { level: 'green', engine: 'podman', machine: { exists: true, running: true } } } });
+    assert.match(steward({ root: p.dir, now: t0 + 8 * D }), /weekly upkeep[\s\S]*Podman machine was running[\s\S]*podman machine stop/);
+    writeJson(status, { tools: { podman: { level: 'green', engine: 'podman', machine: { exists: true, running: false } } } });
+    assert.doesNotMatch(steward({ root: p.dir, now: t0 + 16 * D }), /Podman/);
+  } finally { fs.rmSync(status, { force: true }); cleanup(p.dir); }
+});
+
 test('budget usage runs ccusage only when approved', () => {
   const p = project();
   try {
@@ -322,5 +365,25 @@ test('fk actions writes one checklist, key names only, keeps ticks and reasons; 
     md = fs.readFileSync(file, 'utf8');
     assert.match(md, /workspace with a monthly spend limit/);
     assert.doesNotMatch(md, /sk-ant-test/);
+  } finally { cleanup(p.dir); }
+});
+
+test('sweep: Docker installed but its daemon down is named as such (not "neither found")', () => {
+  const p = project();
+  try {
+    const bin = path.join(p.dir, 'downbin');
+    fs.mkdirSync(bin);
+    // A docker CLI whose daemon is not running: every call fails with nothing on stdout.
+    fs.writeFileSync(path.join(bin, 'docker.cmd'), '@echo Cannot connect to the Docker daemon. Is the docker daemon running? 1>&2\r\n@exit /b 1\r\n');
+    fs.writeFileSync(path.join(bin, 'docker'), '#!/bin/sh\necho "Cannot connect to the Docker daemon. Is the docker daemon running?" >&2\nexit 1\n', { mode: 0o755 });
+    const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+    const engines = ['docker', 'docker.exe', 'docker.cmd', 'podman', 'podman.exe', 'podman.cmd'];
+    const clean = String(process.env[pathKey]).split(path.delimiter).filter((d) => !engines.some((x) => fs.existsSync(path.join(d, x))));
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PATH'));
+    env.PATH = [bin, ...clean].join(path.delimiter);
+    const r = spawnSync(process.execPath, [FK, 'sweep', '--dry-run'], { cwd: p.dir, encoding: 'utf8', env });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /Docker is installed but not running, labelled containers not checked/);
+    assert.doesNotMatch(r.stdout, /neither Docker nor Podman/);
   } finally { cleanup(p.dir); }
 });

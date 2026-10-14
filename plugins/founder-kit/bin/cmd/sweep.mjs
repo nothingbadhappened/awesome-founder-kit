@@ -11,12 +11,23 @@ const inside = (child, parent) => { const r = path.relative(parent, child); retu
 // Docker IDs may be short (12) or full (64) hex; names must match exactly.
 const sameId = (a, b) => !!a && !!b && (a === b || (/^[0-9a-f]{12,}$/.test(a) && /^[0-9a-f]{12,}$/.test(b) && (a.startsWith(b) || b.startsWith(a))));
 
-// Docker resources carrying this project's label. Absent docker -> null.
+// Container resources carrying this project's label: Docker, or Podman when Docker is absent (same CLI, same labels).
+// Neither answers -> null; installed but not running (no daemon, no machine) -> { down: engine }.
 function dockerLabelled(fp) {
-  const ps = cli('docker', ['ps', '-a', '--filter', `label=fk.fingerprint=${fp}`, '--format', '{{.ID}}:{{.Names}}'], { timeout: 10000 });
-  if (ps.missing || (!ps.ok && !ps.out)) return null;
+  let down = null;
+  for (const engine of ['docker', 'podman']) {
+    const found = labelled(engine, fp);
+    if (found?.down) down ||= engine;
+    else if (found) return { engine, ...found };
+  }
+  return down ? { down } : null;
+}
+function labelled(engine, fp) {
+  const ps = cli(engine, ['ps', '-a', '--filter', `label=fk.fingerprint=${fp}`, '--format', '{{.ID}}:{{.Names}}'], { timeout: 10000 });
+  if (ps.missing) return null;
+  if (!ps.ok && !ps.out) return { down: true };
   const containers = ps.out.split(/\r?\n/).filter(Boolean).map((l) => { const [id, name] = l.trim().split(':'); return { id, name }; });
-  const vl = cli('docker', ['volume', 'ls', '-q', '--filter', `label=fk.fingerprint=${fp}`], { timeout: 10000 });
+  const vl = cli(engine, ['volume', 'ls', '-q', '--filter', `label=fk.fingerprint=${fp}`], { timeout: 10000 });
   const volumes = vl.ok ? vl.out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [];
   return { containers, volumes };
 }
@@ -35,6 +46,9 @@ export function plan(root, { includeData = false, now = Date.now() } = {}) {
   const items = [];
   const skip = (e, what, reason) => items.push({ entry: e, what, action: 'skip', reason });
   let base;
+  const found = dockerLabelled(fp);
+  const docker = found?.containers ? found : null;
+  const engine = docker?.engine || 'docker';
 
   for (const e of mine) {
     const what = `${e.kind} ${e.id}`;
@@ -48,9 +62,9 @@ export function plan(root, { includeData = false, now = Date.now() } = {}) {
       if (!e.cmd) { skip(e, what, `process ${e.pid} has no recorded program name; stop it yourself if it is ours`); continue; }
       items.push({ entry: e, what: `${what} (process ${e.pid}, ${name})`, action: 'stop', run: () => stop(e.pid) });
     } else if (e.kind === 'container') {
-      items.push({ entry: e, what, action: 'remove', run: () => cli('docker', ['rm', '-f', e.id]).ok, docker: e.id });
+      items.push({ entry: e, what, action: 'remove', run: () => cli(engine, ['rm', '-f', e.id]).ok, docker: e.id });
     } else if (e.kind === 'volume') {
-      items.push({ entry: e, what, action: 'remove', run: () => cli('docker', ['volume', 'rm', e.id]).ok, docker: e.id });
+      items.push({ entry: e, what, action: 'remove', run: () => cli(engine, ['volume', 'rm', e.id]).ok, docker: e.id });
     } else if (e.kind === 'worktree') {
       if (!fs.existsSync(e.id)) { items.push({ entry: e, what, action: 'drop', reason: 'folder already gone' }); continue; }
       if (inside(e.id, path.join(root, '.claude'))) { skip(e, what, 'inside .claude/, managed by Claude Code'); continue; }
@@ -68,32 +82,32 @@ export function plan(root, { includeData = false, now = Date.now() } = {}) {
     }
   }
 
-  const docker = dockerLabelled(fp);
   if (docker) {
     for (const c of docker.containers) {
       if (items.some((i) => sameId(i.docker, c.id) || sameId(i.docker, c.name)) || mine.some((e) => e.kind === 'container' && (sameId(String(e.id), c.id) || e.id === c.name))) continue;
       const what = `container ${c.name || c.id} (labelled)`;
       if (preIds.some((p) => sameId(p, c.id) || p === c.name)) { items.push({ what, action: 'skip', reason: 'marked pre-existing, never touched' }); continue; }
-      items.push({ what, action: 'remove', run: () => cli('docker', ['rm', '-f', c.id]).ok });
+      items.push({ what, action: 'remove', run: () => cli(engine, ['rm', '-f', c.id]).ok });
     }
     for (const v of docker.volumes) {
       if (mine.some((e) => e.kind === 'volume' && e.id === v)) continue;
       const what = `volume ${v} (labelled)`;
       if (preIds.includes(v)) { items.push({ what, action: 'skip', reason: 'marked pre-existing, never touched' }); continue; }
       if (!includeData) { items.push({ what, action: 'skip', reason: 'holds data; only removed with --include-data' }); continue; }
-      items.push({ what, action: 'remove', run: () => cli('docker', ['volume', 'rm', v]).ok });
+      items.push({ what, action: 'remove', run: () => cli(engine, ['volume', 'rm', v]).ok });
     }
   }
-  return { fp, all, items, docker: !!docker };
+  return { fp, all, items, docker: !!docker, down: found?.down || null };
 }
 
 export default async function sweep(args) {
   const root = needFkRoot();
   const { flags } = parseFlags(args);
   const dry = !!flags['dry-run'];
-  const { fp, all, items, docker } = plan(root, { includeData: !!flags['include-data'] });
+  const { fp, all, items, docker, down } = plan(root, { includeData: !!flags['include-data'] });
+  const why = down ? `${down === 'docker' ? 'Docker' : 'Podman'} is installed but not running` : 'neither Docker nor Podman found';
   if (!items.length) {
-    say(`fk sweep: nothing to clean up for this project${docker ? '' : ' (Docker not found, labelled containers not checked)'}.`);
+    say(`fk sweep: nothing to clean up for this project${docker ? '' : ` (${why}, labelled containers not checked)`}.`);
     if (!dry) markRun(root, 'sweep');
     return;
   }
@@ -116,5 +130,5 @@ export default async function sweep(args) {
     markRun(root, 'sweep');
     say(`fk sweep: done. ${done.size} ledger entries cleared, ${n('skip')} kept${failed ? `, ${failed} failed` : ''}. Only items with this project's fingerprint (${fp}) were considered.`);
   }
-  if (!docker) say('Note: Docker not found, so labelled containers were not checked.');
+  if (!docker) say(`Note: ${why}, so labelled containers were not checked.`);
 }

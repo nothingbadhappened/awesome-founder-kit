@@ -2,8 +2,8 @@
 #
 #   irm https://raw.githubusercontent.com/nothingbadhappened/awesome-founder-kit/main/install/install.ps1 | iex
 #
-# Saved as a file it also takes: -Yes (no question, for CI)  -DryRun (print the commands only)  -WithGh (add GitHub CLI).
-# Piped through iex, use environment variables instead: $env:FK_YES='1'; $env:FK_DRY_RUN='1'; $env:FK_WITH_GH='1'.
+# Saved as a file it also takes: -Yes (no question, for CI)  -DryRun (print the commands only). -WithGh is accepted and
+# changes nothing: the GitHub CLI is a base tool now. Piped through iex, use environment variables instead: $env:FK_YES='1'; $env:FK_DRY_RUN='1'.
 #
 # Checks every base tool, prints one plan, asks once, installs what is missing (user scope where the tool allows),
 # configures, verifies, then adds the founder-kit plugin. Re-running is safe: present tools are left alone,
@@ -19,7 +19,8 @@ function Install-FounderKit {
   # ---- pins (compat.lock.json, checked 2026-10-14) ----
   $LockChecked = '2026-10-14'
   $Min = @{ 'git' = '2.30.0'; 'node' = '20.0.0'; 'uv' = '0.5.0'; 'claude-code' = '2.1.0'; 'gh' = '2.40.0'
-            'codebase-memory-mcp' = '0.9.0'; 'mempalace' = '3.10.0'; 'skillspector' = '2.11.0'; 'gitleaks' = '8.19.0' }
+            'codebase-memory-mcp' = '0.9.0'; 'mempalace' = '3.10.0'; 'skillspector' = '2.11.0'; 'gitleaks' = '8.19.0'
+            'git-lfs' = '3.0.0'; 'mise' = '2024.1.0'; 'just' = '1.15.0'; 'podman' = '4.9.0'; 'podman-compose' = '1.0.6' }
   $UvVersion = '0.13.0'
   $ClaudeVersion = '2.1.296'
   $CbmVersion = '0.11.0'
@@ -28,6 +29,12 @@ function Install-FounderKit {
   $SkillspectorPython = '3.12'
   $GitleaksVersion = '8.30.1'
   $OmcVersion = '5.7.2'
+  $GitLfsVersion = '3.8.0'
+  $MiseVersion = '2026.9.18'
+  $JustVersion = '1.58.0'
+  $PodmanVersion = '5.8.3'
+  $DockerComposeVersion = '2.40.3' # compose on Windows: podman compose prefers docker-compose (compat.lock.json podman-compose.windows)
+  $Machine = @{ cpus = 2; memory = 2048 }
   $Omc = @{ marketplace = 'Yeachan-Heo/oh-my-claudecode'; plugin = 'oh-my-claudecode@omc'; name = 'omc' }
   $Mp = @{ marketplace = 'MemPalace/mempalace'; plugin = 'mempalace@mempalace'; name = 'mempalace' }
   $Fk = @{ marketplace = 'nothingbadhappened/awesome-founder-kit'; plugin = 'founder-kit@awesome-founder-kit'; name = 'awesome-founder-kit' }
@@ -84,7 +91,7 @@ function Install-FounderKit {
   }
 
   function New-Row($id, $label, $size, $why) {
-    return [pscustomobject]@{ id = $id; label = $label; size = $size; why = $why; version = $null; level = 'green'; reason = 'ok'; note = ''; steps = @() }
+    return [pscustomobject]@{ id = $id; label = $label; size = $size; why = $why; version = $null; level = 'green'; reason = 'ok'; note = ''; steps = @(); founder = @(); engine = $null; machine = $null }
   }
   function Set-Grade($row, $min, $installSteps) {
     if (-not $row.version) { $row.level = 'red'; $row.reason = 'missing'; $row.note = 'not installed'; $row.steps += $installSteps }
@@ -96,23 +103,86 @@ function Install-FounderKit {
     $r = New-Row 'git' 'git' 'about 300 MB' 'keeps every version of your project, so nothing is ever lost'
     $r.version = Get-Ver 'git'; Set-Grade $r $Min['git'] @(@{ action = 'install'; cmd = "winget install --id Git.Git $Winget"; rollback = 'winget uninstall --id Git.Git' }); $rows += $r
 
+    $r = New-Row 'git-lfs' 'Git LFS' 'about 15 MB' 'keeps big files (images, audio, game assets) out of the way so the project stays fast to copy'
+    $r.version = Get-Ver 'git-lfs' @('version')
+    Set-Grade $r $Min['git-lfs'] @(@{ action = 'install'; cmd = "winget install --id GitHub.GitLFS $Winget --version $GitLfsVersion"; rollback = 'winget uninstall --id GitHub.GitLFS' })
+    $lfsOn = ''; if ($r.version -and (Get-Command git -ErrorAction SilentlyContinue)) { $lfsOn = (& git config --global --get filter.lfs.process 2>$null | Out-String).Trim() }
+    if (-not $lfsOn) {
+      $r.steps += @{ action = 'configure'; cmd = 'git lfs install'; rollback = 'git lfs uninstall' }
+      if ($r.version -and $r.level -ne 'red') { $r.level = 'red'; $r.reason = 'not-configured'; $r.note = 'not switched on for your user yet (git lfs install)' }
+    }
+    $rows += $r
+
     $r = New-Row 'node' 'Node.js' 'about 100 MB' "runs the kit's safety checks"
     $r.version = Get-Ver 'node'; Set-Grade $r $Min['node'] @(@{ action = 'install'; cmd = "winget install --id OpenJS.NodeJS.LTS $Winget"; rollback = 'winget uninstall --id OpenJS.NodeJS.LTS' }); $rows += $r
 
     $r = New-Row 'uv' 'uv' 'about 40 MB' 'installs the Python helpers below, each in its own sealed box'
     $r.version = Get-Ver 'uv'; Set-Grade $r $Min['uv'] @(@{ action = 'install'; cmd = "irm https://astral.sh/uv/$UvVersion/install.ps1 | iex"; rollback = 'Remove-Item $HOME\.local\bin\uv.exe, $HOME\.local\bin\uvx.exe' }); $rows += $r
 
-    $r = New-Row 'claude-code' 'Claude Code' 'about 200 MB' 'the AI assistant the kit runs inside'
-    $r.version = Get-Ver 'claude'; Set-Grade $r $Min['claude-code'] @(@{ action = 'install'; cmd = "& ([scriptblock]::Create((irm https://claude.ai/install.ps1))) $ClaudeVersion"; rollback = 'Remove-Item $HOME\.local\bin\claude.exe' }); $rows += $r
+    $r = New-Row 'mise' 'mise' 'about 30 MB' "pins each project's tool versions, so the project runs the same on any computer"
+    $r.version = Get-Ver 'mise'; Set-Grade $r $Min['mise'] @(@{ action = 'install'; cmd = "winget install --id jdx.mise $Winget --version $MiseVersion"; rollback = 'winget uninstall --id jdx.mise' }); $rows += $r
+    # mise here, or installed by the step above in this run: just comes pinned through it (steps run in plan order).
+    $hasMise = [bool]$r.version
+    $miseOk = $hasMise -or (@($r.steps).Count -gt 0)
 
-    $r = New-Row 'gh' 'GitHub CLI (optional)' 'about 40 MB' 'lets Claude publish your project to GitHub'
-    $r.version = Get-Ver 'gh'
-    if (-not $r.version) {
-      $r.level = 'yellow'; $r.reason = 'optional'
-      if ($WithGh) { $r.note = 'not installed'; $r.steps += @{ action = 'install'; cmd = "winget install --id GitHub.cli $Winget"; rollback = 'winget uninstall --id GitHub.cli' } }
-      else { $r.note = 'not installed (optional; re-run with -WithGh to add it)' }
+    $r = New-Row 'just' 'just' 'about 5 MB' 'one short command for each job (just setup, just check), the same on every computer'
+    $r.version = Get-Ver 'just'
+    if (-not $r.version -and $hasMise) { $r.version = Get-Ver 'mise' @('exec', '--', 'just', '--version'); if ($r.version) { $r.note = 'through mise (agents run it as mise exec -- just)' } }
+    $justStep = if ($miseOk) { @{ action = 'install'; cmd = "mise use -g just@$JustVersion"; rollback = 'mise unuse -g just' } } else { @{ action = 'install'; cmd = "winget install --id Casey.Just $Winget --version $JustVersion"; rollback = 'winget uninstall --id Casey.Just' } }
+    Set-Grade $r $Min['just'] @($justStep); $rows += $r
+
+    $r = New-Row 'gh' 'GitHub CLI' 'about 40 MB' 'lets Claude publish your project to GitHub and run its checks there'
+    $r.version = Get-Ver 'gh'; Set-Grade $r $Min['gh'] @(@{ action = 'install'; cmd = "winget install --id GitHub.cli $Winget"; rollback = 'winget uninstall --id GitHub.cli' })
+    $ghDir = if ($env:GH_CONFIG_DIR) { $env:GH_CONFIG_DIR } else { Join-Path "$env:APPDATA" 'GitHub CLI' }
+    $ghIn = $env:GH_TOKEN -or $env:GITHUB_TOKEN -or ((Test-Path (Join-Path $ghDir 'hosts.yml')) -and ((Get-Content -Raw (Join-Path $ghDir 'hosts.yml')) -match 'github\.com'))
+    if (-not $ghIn) {
+      $r.founder = @([ordered]@{ id = 'gh-auth'; blocking = $false; cmd = 'gh auth login'; text = 'Sign the GitHub CLI in to your account: in a terminal run `gh auth login` and follow the steps (it opens your browser).' })
+      if ($r.level -eq 'green') { $r.note = 'not signed in yet (your step: gh auth login)' }
     }
     $rows += $r
+
+    # Containers: Podman, or a Docker that is already here (kept; Podman is never added next to it).
+    $r = New-Row 'podman' 'Containers (Podman)' 'about 1-2 GB with its small Linux machine' 'runs databases and other services in sealed boxes, so nothing is installed into your computer itself'
+    $podmanV = Get-Ver 'podman'; $dockerV = if (-not $podmanV) { Get-Ver 'docker' } else { $null }
+    if ($dockerV) { $r.label = 'Containers (Docker)'; $r.version = $dockerV; $r.engine = 'docker'; $r.note = 'Docker found; kept (Podman is not added next to it)' }
+    else {
+      $r.version = $podmanV; if ($podmanV) { $r.engine = 'podman' }
+      Set-Grade $r $Min['podman'] @(@{ action = 'install'; cmd = "winget install --id RedHat.Podman $Winget --version $PodmanVersion"; rollback = 'winget uninstall --id RedHat.Podman' })
+      $wsl = $false
+      if (Get-Command wsl -ErrorAction SilentlyContinue) { try { & wsl --status *> $null; $wsl = ($LASTEXITCODE -eq 0) } catch { } }
+      if (-not $wsl) {
+        # WSL2 needs admin rights and a restart: the founder's step, never run silently. Everything else still installs.
+        $r.founder = @([ordered]@{ id = 'wsl2'; blocking = $true; cmd = 'wsl --install --no-distribution'; text = "Turn on WSL2 (Windows' built-in Linux support; Podman needs it): open PowerShell as administrator, run ``wsl --install --no-distribution``, restart the computer, then run this installer (or fk setup) again to finish Podman." })
+        if ($r.level -eq 'red') { $r.note = "$($r.note); its machine waits for WSL2 (your step)" } else { $r.level = 'yellow'; $r.reason = 'needs-founder'; $r.note = 'needs WSL2 first (your step)' }
+      } else {
+        $ml = ''; if ($podmanV) { $ml = (& podman machine list --format json 2>$null | Out-String) }
+        $r.machine = [ordered]@{ exists = ($ml -match '"Name"'); running = ($ml -match '"Running":\s*true') }
+        if (-not $r.machine.exists) {
+          $r.steps += @{ action = 'configure'; cmd = "podman machine init --cpus $($Machine.cpus) --memory $($Machine.memory)"; rollback = 'ask the founder first; then: podman machine rm podman-machine-default' }
+          $r.steps += @{ action = 'configure'; cmd = 'podman machine start'; rollback = 'podman machine stop' }
+          if ($r.level -ne 'red') { $r.level = 'red'; $r.reason = 'not-configured'; $r.note = 'no Podman machine yet (the small Linux machine containers run in; about 1 GB to download)' }
+        } else {
+          $m = if ($r.machine.running) { 'machine running (stop it with podman machine stop when not needed)' } else { 'machine stopped (podman machine start when you need containers)' }
+          $r.note = (@($r.note, $m) | Where-Object { $_ }) -join '; '
+        }
+      }
+    }
+    $rows += $r
+
+    $r = New-Row 'podman-compose' 'Compose for Podman' 'about 10 MB' "starts all of a project's services with one command (podman compose up)"
+    if ($dockerV) { $r.reason = 'not-needed'; $r.note = 'not needed: Docker brings its own compose' }
+    elseif (Get-Ver 'docker-compose') { $r.reason = 'not-needed'; $r.note = 'docker-compose found; podman compose uses it' }
+    else {
+      # An existing podman-compose is kept; otherwise the standalone docker-compose, the provider podman compose prefers
+      # (Podman Desktop sets up the same binary; the Podman machine forwards the Docker API to it).
+      $r.version = Get-Ver 'podman-compose'
+      Set-Grade $r $Min['podman-compose'] @(@{ action = 'install'; cmd = "winget install --id Docker.DockerCompose $Winget --version $DockerComposeVersion"; rollback = 'winget uninstall --id Docker.DockerCompose' })
+      if (-not $r.version) { $r.note = 'not installed (Windows: the standalone docker-compose, which podman compose uses)' }
+    }
+    $rows += $r
+
+    $r = New-Row 'claude-code' 'Claude Code' 'about 200 MB' 'the AI assistant the kit runs inside'
+    $r.version = Get-Ver 'claude'; Set-Grade $r $Min['claude-code'] @(@{ action = 'install'; cmd = "& ([scriptblock]::Create((irm https://claude.ai/install.ps1))) $ClaudeVersion"; rollback = 'Remove-Item $HOME\.local\bin\claude.exe' }); $rows += $r
 
     $r = New-Row 'oh-my-claudecode' 'oh-my-claudecode' 'about 20 MB' 'the agent team and workflow the kit builds on'
     if (Test-Plugin 'oh-my-claudecode') {
@@ -202,14 +272,27 @@ function Install-FounderKit {
     }
   }
   function Write-Ledger($tool, $step, $ok) {
-    $v = @{ 'uv' = $UvVersion; 'claude-code' = $ClaudeVersion; 'codebase-memory-mcp' = $CbmVersion; 'mempalace' = $MempalaceVersion; 'skillspector' = $SkillspectorCommit; 'gitleaks' = $GitleaksVersion; 'oh-my-claudecode' = $OmcVersion }[$tool]
+    $v = @{ 'uv' = $UvVersion; 'claude-code' = $ClaudeVersion; 'codebase-memory-mcp' = $CbmVersion; 'mempalace' = $MempalaceVersion; 'skillspector' = $SkillspectorCommit; 'gitleaks' = $GitleaksVersion; 'oh-my-claudecode' = $OmcVersion
+           'git-lfs' = $GitLfsVersion; 'mise' = $MiseVersion; 'just' = $JustVersion; 'podman' = $PodmanVersion; 'podman-compose' = $DockerComposeVersion }[$tool]
     $line = [ordered]@{ ts = (Get-Date).ToUniversalTime().ToString('o'); via = 'install.ps1'; tool = $tool; action = $step.action; version = $v; command = $step.cmd; ok = $ok; rollback = $step.rollback } | ConvertTo-Json -Compress
     New-Item -ItemType Directory -Force -Path $FkHome | Out-Null
     [IO.File]::AppendAllText($Ledger, $line + "`n")
   }
+  # Steps only the founder can take (admin rights and a restart, a browser sign-in): listed, never run.
+  function Show-Founder($rows) {
+    $f = @($rows | ForEach-Object { $_.founder } | Where-Object { $_ } | Where-Object { $_.blocking }) + @($rows | ForEach-Object { $_.founder } | Where-Object { $_ -and -not $_.blocking }) # blocking first (WSL2 before a sign-in)
+    if (-not $f.Count) { return }
+    Write-Host ''; Write-Host 'Only you can do these (the installer never runs them for you; fk actions lists them too):' -ForegroundColor Yellow
+    foreach ($x in $f) { Write-Host "  - $($x.text)" }
+  }
   function Write-Status($rows) {
     $tools = [ordered]@{}
-    foreach ($r in $rows) { $tools[$r.id] = [ordered]@{ level = $r.level; reason = $r.reason; version = $r.version; min = $Min[$r.id]; note = $r.note } }
+    foreach ($r in $rows) {
+      $t = [ordered]@{ level = $r.level; reason = $r.reason; version = $r.version; min = $Min[$r.id]; note = $r.note }
+      if ($r.id -eq 'podman') { $t.engine = $r.engine; $t.machine = $r.machine }
+      if (@($r.founder).Count) { $t.founder = @($r.founder) }
+      $tools[$r.id] = $t
+    }
     $doc = [ordered]@{ ts = (Get-Date).ToUniversalTime().ToString('o'); checked_by = 'install.ps1'; lock_checked = $LockChecked; tools = $tools } | ConvertTo-Json -Depth 5
     New-Item -ItemType Directory -Force -Path $FkHome | Out-Null
     [IO.File]::WriteAllText($StatusFile, $doc)
@@ -226,6 +309,7 @@ function Install-FounderKit {
   if ($todo.Count -eq 0) {
     if (-not $DryRun) { Write-Status $rows }
     Write-Host ''; Write-Host 'Everything is already in place.' -ForegroundColor Green
+    Show-Founder $rows
   } else {
     Write-Host ''; Write-Host 'Plan (everything below is free and open source):'
     $i = 0
@@ -238,6 +322,7 @@ function Install-FounderKit {
     }
     Write-Host '  Nothing is uninstalled or downgraded. Every change is logged with an undo hint in ~/.fk/install-ledger.jsonl.'
     Write-Host '  Windows may ask for permission to install (a blue or yellow prompt). Say yes.'
+    Show-Founder $rows
     if ($DryRun) { Write-Host ''; Write-Host 'Dry run: nothing was changed.'; return }
     $go = $Yes
     if (-not $go) { $a = Read-Host 'Install and set up these now? [Y/n]'; $go = -not ($a -match '^\s*n') }
@@ -257,6 +342,10 @@ function Install-FounderKit {
     Write-Status $rows
     Write-Host ''; Write-Host 'Result' -ForegroundColor Cyan
     Show-Table $rows
+    if (@($todo | Where-Object { $_.id -eq 'mise' }).Count) {
+      Write-Host 'mise: agents run project tools with `mise exec -- <command>`. For your own terminal, add to your PowerShell profile: mise activate pwsh | Out-String | Invoke-Expression'
+    }
+    Show-Founder $rows
   }
 
   # The user-level `fk` command (~/.local/bin/fk.cmd, user PATH): the kit's own code writes it (fk setup --shim).

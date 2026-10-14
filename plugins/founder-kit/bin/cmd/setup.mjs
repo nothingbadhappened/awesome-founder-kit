@@ -1,4 +1,4 @@
-// fk setup [--yes] [--dry-run] [--only <tool>] [--with-gh] | fk setup --shim | fk setup --remove-shim
+// fk setup [--yes] [--dry-run] [--only <tool>] | fk setup --shim | fk setup --remove-shim   (--with-gh: accepted, no effect; gh is a base tool)
 // Checks the kit's base tools against compat.lock.json, shows one plain-language plan, installs and configures
 // what is missing after one yes, verifies, and records the result. Exit 0 when nothing is red.
 import readline from 'node:readline';
@@ -6,11 +6,19 @@ import { loadLock, detect, TOOLS, osName, realExec, appendLedger, writeStatus, s
 import { readJson } from '../../hooks/lib.mjs';
 
 const LABEL = { green: '\x1b[32mgreen \x1b[0m', yellow: '\x1b[33myellow\x1b[0m', red: '\x1b[31mred   \x1b[0m' };
-const USAGE = `usage: fk setup [--yes] [--dry-run] [--only <${TOOLS.map((t) => t.id).join('|')}>] [--with-gh] | fk setup --shim | fk setup --remove-shim`;
+const USAGE = `usage: fk setup [--yes] [--dry-run] [--only <${TOOLS.map((t) => t.id).join('|')}>] | fk setup --shim | fk setup --remove-shim`;
 
 function table(rows, out) {
   const w = Math.max(...rows.map((r) => r.label.length));
   for (const r of rows) out(`  ${LABEL[r.level]}  ${r.label.padEnd(w)}  ${[r.version, r.note].filter(Boolean).join(', ') || 'ready'}`);
+}
+
+// Steps only the founder can take (admin rights and a restart, a browser sign-in): listed, never run.
+function founderSteps(rows, out) {
+  const steps = rows.flatMap((r) => r.founder || []).sort((a, b) => !!b.blocking - !!a.blocking); // blocking first (WSL2 before a sign-in)
+  if (!steps.length) return;
+  out('\nOnly you can do these (the kit never runs them for you; they are also in `fk actions`):');
+  for (const f of steps) out(`  - ${f.text}`);
 }
 
 function askYes(question) {
@@ -30,7 +38,7 @@ export async function runSetup(args = [], deps = {}) {
   const lock = loadLock();
   if (!lock) { out('fk setup: compat.lock.json is missing or unreadable; reinstall the kit.'); return 2; }
   if (oi >= 0 && !TOOLS.some((t) => t.id === only)) { out(USAGE); return 2; }
-  const opts = { env, os: o, withGh: args.includes('--with-gh') || only === 'gh', has: deps.has };
+  const opts = { env, os: o, has: deps.has };
   const pick = (rows) => (only ? rows.filter((r) => r.id === only) : rows);
   // The user-level `fk` command (C3): the plugin's bin/ reaches only the Bash tool, not PowerShell or a terminal.
   const sopts = { env, userPath: deps.userPath, dry };
@@ -44,8 +52,9 @@ export async function runSetup(args = [], deps = {}) {
   const todo = rows.filter((r) => r.steps.length);
   const anyRed = (rs) => rs.some((r) => r.level === 'red');
   if (!todo.length) {
-    if (!dry) { writeStatus(rows, lock); addShim(); }
+    if (!dry) { writeStatus(only ? mergeRows(readJson(statusFile(), { tools: {} }), rows) : rows, lock); addShim(); }
     out(anyRed(rows) ? '\nSome tools need attention (see red rows); nothing here can be fixed automatically.' : '\nAll base tools are ready.');
+    founderSteps(rows, out);
     return anyRed(rows) ? 1 : 0;
   }
 
@@ -57,6 +66,8 @@ export async function runSetup(args = [], deps = {}) {
   });
   out('  Nothing is uninstalled or downgraded. Every change is logged with an undo hint in ~/.fk/install-ledger.jsonl.');
   if (o === 'win' && todo.some((r) => r.steps.some((s) => /winget/.test(s.cmd)))) out('  Windows may ask once for permission to install (a blue or yellow prompt). Say yes.');
+  if (todo.some((r) => r.steps.some((s) => /^sudo /.test(s.cmd)))) out('  Some steps use sudo: your computer password may be asked once.');
+  founderSteps(rows, out);
 
   if (dry) { out('\nDry run: nothing was changed.'); return anyRed(rows) ? 1 : 0; }
   const isTTY = deps.isTTY ?? !!process.stdin.isTTY;
@@ -88,6 +99,7 @@ export async function runSetup(args = [], deps = {}) {
   for (const n of next) out(`  - ${n}`);
   if (!anyRed(rows)) out('  - Restart Claude Code so it loads the new tools.');
   else out('\nSome items are still red. Run `fk setup` again, or ask Claude to explain the red rows.');
+  founderSteps(rows, out);
   return anyRed(rows) ? 1 : 0;
 }
 

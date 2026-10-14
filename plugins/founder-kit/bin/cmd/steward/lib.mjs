@@ -80,7 +80,9 @@ export function cli(cmd, args, { timeout = 15000, cwd } = {}) {
   const r = win
     ? spawnSync([cmd, ...args].map(quote).join(' '), { shell: true, encoding: 'utf8', timeout, cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     : spawnSync(cmd, args, { encoding: 'utf8', timeout, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-  const missing = r.error?.code === 'ENOENT' || r.status === 127 || r.status === 9009 || /is not recognized as an internal or external command/i.test(r.stderr || '');
+  const missing = r.error?.code === 'ENOENT' || r.status === 127 || r.status === 9009 || /is not recognized as an internal or external command/i.test(r.stderr || '')
+    // Localised Windows prints "not recognized" in its own language: ask where.exe instead of reading the message.
+    || (win && r.status !== 0 && spawnSync('where.exe', [cmd], { stdio: 'ignore', windowsHide: true }).status !== 0);
   return { ok: r.status === 0, missing, timedOut: r.error?.code === 'ETIMEDOUT' || r.signal === 'SIGTERM', out: r.stdout || '', err: r.stderr || '' };
 }
 

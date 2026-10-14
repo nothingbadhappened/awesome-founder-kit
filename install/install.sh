@@ -3,7 +3,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/nothingbadhappened/awesome-founder-kit/main/install/install.sh | bash
 #
-# Options (after `bash -s --` when piped): --yes (no question, for CI)  --dry-run (print the commands only)  --with-gh
+# Options (after `bash -s --` when piped): --yes (no question, for CI)  --dry-run (print the commands only)
+# (--with-gh is accepted and changes nothing: the GitHub CLI is a base tool now.)
 #
 # Checks every base tool, prints one plan, asks once, installs what is missing (into your home folder where the
 # tool allows), configures, verifies, then adds the founder-kit plugin. Re-running is safe: present tools are left
@@ -11,13 +12,13 @@
 # Versions mirror plugins/founder-kit/compat.lock.json (a test fails when they drift).
 set -u
 
-YES=0; DRY=0; WITH_GH=0
+YES=0; DRY=0
 for a in "$@"; do
   case "$a" in
     --yes|-y) YES=1 ;;
     --dry-run) DRY=1 ;;
-    --with-gh) WITH_GH=1 ;;
-    *) echo "usage: install.sh [--yes] [--dry-run] [--with-gh]"; exit 2 ;;
+    --with-gh) ;;
+    *) echo "usage: install.sh [--yes] [--dry-run]"; exit 2 ;;
   esac
 done
 [ "${FK_YES:-}" = 1 ] && YES=1
@@ -34,17 +35,27 @@ SKILLSPECTOR_COMMIT=b07f181d9138878c3827de0947a9fd2c6a84a66c
 SKILLSPECTOR_PYTHON=3.12
 GITLEAKS_VERSION=8.30.1
 OMC_VERSION=5.7.2
+GIT_LFS_VERSION=3.8.0
+MISE_VERSION=2026.9.18
+JUST_VERSION=1.58.0
+GH_VERSION=2.102.0
+PODMAN_VERSION=5.8.3
+PODMAN_COMPOSE_VERSION=1.6.0
+MACHINE_CPUS=2
+MACHINE_MEMORY=2048
 min_of() {
   case "$1" in
     git) echo 2.30.0 ;; node) echo 20.0.0 ;; uv) echo 0.5.0 ;; claude-code) echo 2.1.0 ;; gh) echo 2.40.0 ;;
-    codebase-memory-mcp) echo 0.9.0 ;; mempalace) echo 3.10.0 ;; skillspector) echo 2.11.0 ;; gitleaks) echo 8.19.0 ;; *) echo "" ;;
+    codebase-memory-mcp) echo 0.9.0 ;; mempalace) echo 3.10.0 ;; skillspector) echo 2.11.0 ;; gitleaks) echo 8.19.0 ;;
+    git-lfs) echo 3.0.0 ;; mise) echo 2024.1.0 ;; just) echo 1.15.0 ;; podman) echo 4.9.0 ;; podman-compose) echo 1.0.6 ;; *) echo "" ;;
   esac
 }
 pin_of() {
   case "$1" in
     node) echo "$NODE_VERSION" ;; uv) echo "$UV_VERSION" ;; claude-code) echo "$CLAUDE_VERSION" ;; codebase-memory-mcp) echo "$CBM_VERSION" ;;
     mempalace) echo "$MEMPALACE_VERSION" ;; skillspector) echo "$SKILLSPECTOR_COMMIT" ;; gitleaks) echo "$GITLEAKS_VERSION" ;;
-    oh-my-claudecode) echo "$OMC_VERSION" ;; *) echo "" ;;
+    oh-my-claudecode) echo "$OMC_VERSION" ;; git-lfs) echo "$GIT_LFS_VERSION" ;; mise) echo "$MISE_VERSION" ;; just) echo "$JUST_VERSION" ;;
+    gh) echo "$GH_VERSION" ;; podman) echo "$PODMAN_VERSION" ;; podman-compose) echo "$PODMAN_COMPOSE_VERSION" ;; *) echo "" ;;
   esac
 }
 OMC_MARKETPLACE=Yeachan-Heo/oh-my-claudecode;    OMC_PLUGIN=oh-my-claudecode@omc
@@ -82,8 +93,10 @@ marketplace_added() { grep -qi "\"repo\": *\"$1\"" "$PLUGINS/known_marketplaces.
 json_esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 # Plan rows: parallel arrays. Steps: "id<TAB>action<TAB>cmd<TAB>rollback" lines.
-IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); STEPS=""
-row() { IDS+=("$1"); LABELS+=("$2"); SIZES+=("$3"); WHYS+=("$4"); VERSIONS+=("$5"); LEVELS+=(green); REASONS+=(ok); NOTES+=(""); }
+# FOUNDERS: a JSON object per row for a step only the founder can take (empty when none).
+IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); FOUNDERS=(); STEPS=""
+PODMAN_ENGINE=""; PODMAN_MACHINE=null
+row() { IDS+=("$1"); LABELS+=("$2"); SIZES+=("$3"); WHYS+=("$4"); VERSIONS+=("$5"); LEVELS+=(green); REASONS+=(ok); NOTES+=(""); FOUNDERS+=(""); }
 last() { echo $(( ${#IDS[@]} - 1 )); }
 set_red() { local i; i=$(last); LEVELS[$i]=red; REASONS[$i]="$1"; NOTES[$i]="$2"; }
 step() { STEPS="$STEPS$1	$2	$3	$4
@@ -92,6 +105,15 @@ grade() { # grade <id> <install-cmd> <rollback>
   local i v m; i=$(last); v="${VERSIONS[$i]}"; m=$(min_of "$1")
   if [ -z "$v" ]; then set_red missing "not installed"; step "$1" install "$2" "$3"
   elif [ -n "$m" ] && ! at_least "$v" "$m"; then set_red below-floor "older than the minimum $m"; step "$1" upgrade "$2" "$3"; fi
+}
+pkg_grade() { # pkg_grade <id> <package> <fallback message> [pacman package]: OS package managers (no version pins there)
+  local p="${4:-$2}"
+  if [ "$OSN" = mac ]; then
+    if has brew; then grade "$1" "brew install $2" "brew uninstall $2"; else grade "$1" "echo '$3 (or install Homebrew first)' && exit 1" "-"; fi
+  elif has apt-get; then grade "$1" "sudo apt-get update && sudo apt-get install -y $2" "sudo apt-get remove $2"
+  elif has dnf; then grade "$1" "sudo dnf install -y $2" "sudo dnf remove $2"
+  elif has pacman; then grade "$1" "sudo pacman -S --noconfirm $p" "sudo pacman -R $p"
+  else grade "$1" "echo '$3' && exit 1" "-"; fi
 }
 plugin_steps() { # plugin_steps <id> <marketplace repo> <plugin> <marketplace name>
   marketplace_added "$2" || step "$1" install "claude plugin marketplace add $2" "claude plugin marketplace remove $4"
@@ -105,7 +127,8 @@ mempalace_dir() {
 }
 
 state() {
-  IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); STEPS=""
+  IDS=(); LABELS=(); LEVELS=(); REASONS=(); VERSIONS=(); NOTES=(); SIZES=(); WHYS=(); FOUNDERS=(); STEPS=""
+  PODMAN_ENGINE=""; PODMAN_MACHINE=null
   local i cmd
 
   row git git "about 300 MB" "keeps every version of your project, so nothing is ever lost" "$(ver git --version)"
@@ -115,6 +138,14 @@ state() {
   elif has dnf; then grade git "sudo dnf install -y git" "sudo dnf remove git"
   else grade git "echo 'Install git with your system package manager' && exit 1" "-"; fi
 
+  row git-lfs "Git LFS" "about 15 MB" "keeps big files (images, audio, game assets) out of the way so the project stays fast to copy" "$(ver git-lfs version)"
+  pkg_grade git-lfs git-lfs "Install Git LFS from https://git-lfs.com"
+  i=$(last)
+  if [ -z "${VERSIONS[$i]}" ] || [ -z "$(git config --global --get filter.lfs.process 2>/dev/null)" ]; then
+    step git-lfs configure "git lfs install" "git lfs uninstall"
+    if [ -n "${VERSIONS[$i]}" ] && [ "${LEVELS[$i]}" != red ]; then set_red not-configured "not switched on for your user yet (git lfs install)"; fi
+  fi
+
   row node Node.js "about 100 MB" "runs the kit's safety checks" "$(ver node --version)"
   grade node "set -e; V=$NODE_VERSION; $ARCH; D=\"\$HOME/.local/share/fk/node-v\$V\"; mkdir -p \"\$D\" \"\$HOME/.local/bin\"; curl -fsSL \"https://nodejs.org/dist/v\$V/node-v\$V-\$OS-\$A.tar.gz\" | tar -xz -C \"\$D\" --strip-components=1; for b in node npm npx; do ln -sf \"\$D/bin/\$b\" \"\$HOME/.local/bin/\$b\"; done" \
     "rm -rf ~/.local/share/fk/node-v$NODE_VERSION ~/.local/bin/node ~/.local/bin/npm ~/.local/bin/npx"
@@ -122,17 +153,74 @@ state() {
   row uv uv "about 40 MB" "installs the Python helpers below, each in its own sealed box" "$(ver uv --version)"
   grade uv "curl -LsSf https://astral.sh/uv/$UV_VERSION/install.sh | sh" "rm ~/.local/bin/uv ~/.local/bin/uvx"
 
+  row mise mise "about 30 MB" "pins each project's tool versions, so the project runs the same on any computer" "$(ver mise --version)"
+  if [ "$OSN" = mac ] && has brew; then grade mise "brew install mise" "brew uninstall mise"
+  else grade mise "curl -fsSL https://mise.run | MISE_VERSION=v$MISE_VERSION sh" "rm ~/.local/bin/mise"; fi
+  # mise here, or installed by the step above in this run: just and gh come pinned through it (steps run in plan order).
+  local mise_ok=""; { has mise || [ "${LEVELS[$(last)]}" = red ]; } && mise_ok=1
+
+  local jv; jv=$(ver just --version)
+  [ -z "$jv" ] && has mise && jv=$(ver mise exec -- just --version)
+  row just just "about 5 MB" "one short command for each job (just setup, just check), the same on every computer" "$jv"
+  if [ -n "$mise_ok" ]; then grade just "mise use -g just@$JUST_VERSION" "mise unuse -g just"
+  else pkg_grade just just "Install just with: mise use -g just@$JUST_VERSION"; fi
+
+  # An older gh on PATH (apt) does not hide the pinned one mise installed.
+  local gv mv gh_cmd="gh auth login"; gv=$(ver gh --version)
+  if has mise && { [ -z "$gv" ] || ! at_least "$gv" "$(min_of gh)"; }; then
+    mv=$(ver mise exec -- gh --version)
+    if [ -n "$mv" ] && { [ -z "$gv" ] || ! at_least "$gv" "$mv"; }; then gv=$mv; gh_cmd="mise exec -- gh auth login"; fi
+  fi
+  row gh "GitHub CLI" "about 40 MB" "lets Claude publish your project to GitHub and run its checks there" "$gv"
+  # apt ships gh below the floor (Ubuntu 22.04: 2.4.0): mise installs the pinned release. Homebrew is current.
+  if [ -n "$mise_ok" ] && ! { [ "$OSN" = mac ] && has brew; }; then grade gh "mise use -g gh@$GH_VERSION" "mise unuse -g gh"; [ "${LEVELS[$(last)]}" = red ] && gh_cmd="mise exec -- gh auth login"
+  else pkg_grade gh gh "Install gh from https://cli.github.com" github-cli; fi
+  i=$(last)
+  if [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] && ! grep -q github.com "${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}/hosts.yml" 2>/dev/null; then
+    FOUNDERS[$i]="{\"id\":\"gh-auth\",\"blocking\":false,\"cmd\":\"$gh_cmd\",\"text\":\"Sign the GitHub CLI in to your account: in a terminal run \`$gh_cmd\` and follow the steps (it opens your browser).\"}"
+    [ "${LEVELS[$i]}" = green ] && NOTES[$i]="not signed in yet (your step: $gh_cmd)"
+  fi
+
+  # Containers: Podman, or a Docker that is already here (kept; Podman is never added next to it).
+  local pv dv=""; pv=$(ver podman --version); [ -z "$pv" ] && dv=$(ver docker --version)
+  if [ -n "$dv" ]; then
+    row podman "Containers (Docker)" "about 1-2 GB with its small Linux machine" "runs databases and other services in sealed boxes, so nothing is installed into your computer itself" "$dv"
+    PODMAN_ENGINE=docker; NOTES[$(last)]="Docker found; kept (Podman is not added next to it)"
+  else
+    row podman "Containers (Podman)" "about 1-2 GB with its small Linux machine" "runs databases and other services in sealed boxes, so nothing is installed into your computer itself" "$pv"
+    [ -n "$pv" ] && PODMAN_ENGINE=podman
+    if [ "$OSN" = linux ] && has apt-get && [ -n "$pv" ] && ! at_least "$pv" "$(min_of podman)"; then
+      # apt already gave its newest Podman: planning the same apt command again changes nothing. The founder decides.
+      i=$(last); LEVELS[$i]=yellow; REASONS[$i]=distro-old
+      NOTES[$i]="Your Linux ships Podman $pv; Podman ≥4.9 needs Ubuntu 24.04+/Debian 13+ or packages from podman.io."
+      FOUNDERS[$i]="{\"id\":\"podman-old\",\"blocking\":false,\"cmd\":\"-\",\"text\":\"${NOTES[$i]}\"}"
+    else pkg_grade podman podman "Install Podman from https://podman.io"; fi
+    # The machine comes after Podman itself; without Homebrew the founder installs Podman by hand first.
+    if [ "$OSN" = mac ] && { [ -n "$pv" ] || has brew; }; then
+      i=$(last); local ml="" exists=false running=false
+      [ -n "$pv" ] && ml=$(podman machine list --format json 2>/dev/null)
+      printf '%s' "$ml" | grep -q '"Name"' && exists=true
+      printf '%s' "$ml" | grep -Eq '"Running": *true' && running=true
+      PODMAN_MACHINE="{\"exists\":$exists,\"running\":$running}"
+      if [ "$exists" = false ]; then
+        step podman configure "podman machine init --cpus $MACHINE_CPUS --memory $MACHINE_MEMORY" "ask the founder first; then: podman machine rm podman-machine-default"
+        step podman configure "podman machine start" "podman machine stop"
+        if [ "${LEVELS[$i]}" != red ]; then set_red not-configured "no Podman machine yet (the small Linux machine containers run in; about 1 GB to download)"; fi
+      fi
+    fi
+  fi
+
+  if [ -n "$dv" ] || has docker-compose; then
+    row podman-compose "Compose for Podman" "about 10 MB" "starts all of a project's services with one command (podman compose up)" ""
+    REASONS[$(last)]=not-needed
+    if [ -n "$dv" ]; then NOTES[$(last)]="not needed: Docker brings its own compose"; else NOTES[$(last)]="docker-compose found; podman compose uses it"; fi
+  else
+    row podman-compose "Compose for Podman" "about 10 MB" "starts all of a project's services with one command (podman compose up)" "$(ver podman-compose --version)"
+    grade podman-compose "uv tool install podman-compose==$PODMAN_COMPOSE_VERSION" "uv tool uninstall podman-compose"
+  fi
+
   row claude-code "Claude Code" "about 200 MB" "the AI assistant the kit runs inside" "$(ver claude --version)"
   grade claude-code "curl -fsSL https://claude.ai/install.sh | bash -s $CLAUDE_VERSION" "rm ~/.local/bin/claude"
-
-  row gh "GitHub CLI (optional)" "about 40 MB" "lets Claude publish your project to GitHub" "$(ver gh --version)"
-  i=$(last)
-  if [ -z "${VERSIONS[$i]}" ]; then
-    LEVELS[$i]=yellow; REASONS[$i]=optional
-    if [ "$WITH_GH" = 1 ] && has brew; then NOTES[$i]="not installed"; step gh install "brew install gh" "brew uninstall gh"
-    elif [ "$WITH_GH" = 1 ]; then NOTES[$i]="not installed; see https://cli.github.com"
-    else NOTES[$i]="not installed (optional; re-run with --with-gh to add it)"; fi
-  fi
 
   row oh-my-claudecode oh-my-claudecode "about 20 MB" "the agent team and workflow the kit builds on" ""
   i=$(last)
@@ -222,10 +310,21 @@ write_status() {
   mkdir -p "$FK_HOME"
   local i sep="" body=""
   for i in "${!IDS[@]}"; do
-    body="$body$sep\"${IDS[$i]}\":{\"level\":\"${LEVELS[$i]}\",\"reason\":\"${REASONS[$i]}\",\"version\":\"$(json_esc "${VERSIONS[$i]}")\",\"min\":\"$(min_of "${IDS[$i]}")\",\"note\":\"$(json_esc "${NOTES[$i]}")\"}"
+    local extra=""
+    [ "${IDS[$i]}" = podman ] && extra=",\"engine\":\"$PODMAN_ENGINE\",\"machine\":$PODMAN_MACHINE"
+    [ -n "${FOUNDERS[$i]}" ] && extra="$extra,\"founder\":[${FOUNDERS[$i]}]"
+    body="$body$sep\"${IDS[$i]}\":{\"level\":\"${LEVELS[$i]}\",\"reason\":\"${REASONS[$i]}\",\"version\":\"$(json_esc "${VERSIONS[$i]}")\",\"min\":\"$(min_of "${IDS[$i]}")\",\"note\":\"$(json_esc "${NOTES[$i]}")\"$extra}"
     sep=","
   done
   printf '{"ts":"%s","checked_by":"install.sh","lock_checked":"%s","tools":{%s}}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$LOCK_CHECKED" "$body" > "$STATUS_FILE"
+}
+show_founder() { # steps only the founder can take: listed, never run
+  local i any=""
+  for i in "${!IDS[@]}"; do
+    [ -n "${FOUNDERS[$i]}" ] || continue
+    [ -n "$any" ] || { echo; echo "${Y}Only you can do these (the installer never runs them for you; fk actions lists them too):${N}"; any=1; }
+    printf '  - %s\n' "$(printf '%s' "${FOUNDERS[$i]}" | sed 's/.*"text":"//; s/"}$//')"
+  done
 }
 todo_ids() { printf '%s' "$STEPS" | cut -f1 | awk 'NF && !seen[$0]++'; }
 
@@ -239,6 +338,7 @@ show_table
 if [ -z "$STEPS" ]; then
   [ "$DRY" = 1 ] || write_status
   echo; echo "${G}Everything is already in place.${N}"
+  show_founder
 else
   echo; echo "Plan (everything below is free and open source):"
   n=0
@@ -250,6 +350,7 @@ else
   done
   echo "  Nothing is uninstalled or downgraded. Every change is logged with an undo hint in ~/.fk/install-ledger.jsonl."
   printf '%s' "$STEPS" | grep -q 'sudo ' && echo "  Some steps use sudo: your computer password may be asked once."
+  show_founder
   if [ "$DRY" = 1 ]; then echo; echo "Dry run: nothing was changed."; exit 0; fi
   if [ "$YES" != 1 ]; then
     if [ -r /dev/tty ]; then printf 'Install and set up these now? [Y/n] '; read -r ans < /dev/tty || ans=n
@@ -272,6 +373,8 @@ EOF
   write_status
   echo; echo "${C}Result${N}"
   show_table
+  case " $(todo_ids | tr '\n' ' ') " in *" mise "*) echo 'mise: agents run project tools with `mise exec -- <command>`. For your own terminal add to ~/.bashrc (or ~/.zshrc): eval "$(mise activate bash)"' ;; esac
+  show_founder
 fi
 
 # The user-level `fk` command (~/.local/bin/fk): the kit's own code writes it (fk setup --shim).

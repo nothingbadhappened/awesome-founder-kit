@@ -21,4 +21,4 @@ Read first: `docs/00-constraints.md`, `docs/02-architecture.md`, `docs/adr/*`, `
    Then record the real commands for the kit hooks: `fk config set runner "<runner>"`, `fk config set check "<full check command>"`, `fk config set fast_gates "<fast pre-commit gates>"` (and `stack`).
 10. **Validate:** frontmatter has `name` and `description` (≤ 200 chars); `SKILL.md` ≤ 350 words; the skill appears in the skills list after reload.
 11. **Independent review:** `oh-my-claudecode:critic` reviews the skill and standards against the architecture (critical/major/minor, paste-ready fixes); apply them. Then `oh-my-claudecode:verifier` checks cross-references. Journal both (`fk-journal`).
-12. **First task:** the bootstrap task: repo skeleton + the gates themselves, each proven red once on a planted violation.
+12. **First task:** the bootstrap task: repo skeleton + the gates themselves, each proven red once on a planted violation. It starts with `fk portability init` (the kit's `justfile` and `.github/workflows/fresh-clone.yml`; existing files are never overwritten), pins the runtimes with `mise use <tool>@<exact version>` and puts services in `compose.yaml`.

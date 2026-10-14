@@ -44,8 +44,29 @@ export function installSteps(id, lock, os, { has = () => false, upgrade = false 
         : [{ cmd: `curl -fsSL https://claude.ai/install.sh | bash -s ${t.version}`, rollback: 'rm ~/.local/bin/claude' }];
     case 'gh':
       if (win) return [{ cmd: WINGET('GitHub.cli'), rollback: 'winget uninstall --id GitHub.cli' }];
-      if (has('brew')) return [{ cmd: 'brew install gh', rollback: 'brew uninstall gh' }];
-      return [{ cmd: 'echo "Install gh from https://cli.github.com (optional)" && exit 1', rollback: '-' }];
+      // apt ships old gh (Ubuntu 22.04: 2.4.0, below the floor): mise installs the pinned release instead. Homebrew is current.
+      if (has('mise') && !(os === 'mac' && has('brew'))) return [{ cmd: `mise use -g gh@${t.version}`, rollback: 'mise unuse -g gh' }];
+      return pkg('gh', 'gh', os, has, 'Install gh from https://cli.github.com', { pacman: 'github-cli' });
+    case 'git-lfs':
+      if (win) return [{ cmd: WINGET('GitHub.GitLFS', `--version ${t.version}`), rollback: 'winget uninstall --id GitHub.GitLFS' }];
+      return pkg('git-lfs', 'git-lfs', os, has, 'Install Git LFS from https://git-lfs.com');
+    case 'mise':
+      if (win) return [{ cmd: WINGET('jdx.mise', `--version ${t.version}`), rollback: 'winget uninstall --id jdx.mise' }];
+      if (os === 'mac' && has('brew')) return [{ cmd: 'brew install mise', rollback: 'brew uninstall mise' }];
+      return [{ cmd: `curl -fsSL https://mise.run | MISE_VERSION=v${t.version} sh`, rollback: 'rm ~/.local/bin/mise' }];
+    case 'just':
+      // mise here or installed earlier in the same run: one more pinned tool in its global config (no admin, no package manager).
+      if (has('mise')) return [{ cmd: `mise use -g just@${t.version}`, rollback: 'mise unuse -g just' }];
+      if (win) return [{ cmd: WINGET('Casey.Just', `--version ${t.version}`), rollback: 'winget uninstall --id Casey.Just' }];
+      return pkg('just', 'just', os, has, `Install just with: mise use -g just@${t.version}`);
+    case 'podman':
+      if (win) return [{ cmd: WINGET('RedHat.Podman', `--version ${t.version}`), rollback: 'winget uninstall --id RedHat.Podman' }];
+      return pkg('podman', 'podman', os, has, 'Install Podman from https://podman.io');
+    case 'podman-compose':
+      // Windows: podman compose hands the work to docker-compose (Podman Desktop's own Compose setup); the Podman
+      // machine forwards the Docker API, so the standalone binary needs no Docker Desktop.
+      if (win) return [{ cmd: WINGET(t.windows.winget, `--version ${t.windows.version}`), rollback: `winget uninstall --id ${t.windows.winget}` }];
+      return [{ cmd: `uv tool install podman-compose==${t.version}`, rollback: 'uv tool uninstall podman-compose' }];
     case 'codebase-memory-mcp': {
       const base = `https://github.com/${t.repo}/releases/download/v${t.version}`;
       const raw = `https://raw.githubusercontent.com/${t.repo}/v${t.version}`;
@@ -75,6 +96,37 @@ export function installSteps(id, lock, os, { has = () => false, upgrade = false 
     default: return [];
   }
 }
+
+// OS package managers (no version pins there; the floor in compat.lock.json is checked afterwards).
+function pkg(name, brew, os, has, fallback, alt = {}) {
+  if (os === 'mac') return has('brew') ? [{ cmd: `brew install ${brew}`, rollback: `brew uninstall ${brew}` }]
+    : [{ cmd: `echo "${fallback} (or install Homebrew first)" && exit 1`, rollback: '-' }];
+  if (has('apt-get')) return [{ cmd: `sudo apt-get update && sudo apt-get install -y ${name}`, rollback: `sudo apt-get remove ${name}` }];
+  if (has('dnf')) return [{ cmd: `sudo dnf install -y ${name}`, rollback: `sudo dnf remove ${name}` }];
+  if (has('pacman')) return [{ cmd: `sudo pacman -S --noconfirm ${alt.pacman || name}`, rollback: `sudo pacman -R ${alt.pacman || name}` }];
+  return [{ cmd: `echo "${fallback}" && exit 1`, rollback: '-' }];
+}
+
+// Windows and macOS run containers in a small Linux machine. Modest defaults; created once, never deleted by the kit.
+export function machineSteps(lock) {
+  const m = lock.tools.podman.machine;
+  return [
+    { action: 'configure', cmd: `podman machine init --cpus ${m.cpus} --memory ${m.memory_mib}`, rollback: 'ask the founder first; then: podman machine rm podman-machine-default' },
+    { action: 'configure', cmd: 'podman machine start', rollback: 'podman machine stop' },
+  ];
+}
+
+// Steps only the founder can take (admin rights, a restart, a browser sign-in): shown in the plan and in `fk actions`.
+export const FOUNDER = {
+  wsl: { id: 'wsl2', blocking: true, cmd: 'wsl --install --no-distribution',
+    text: 'Turn on WSL2 (Windows\' built-in Linux support; Podman needs it): open PowerShell as administrator, run `wsl --install --no-distribution`, restart the computer, then run `fk setup` again to finish Podman.' },
+  gh: { id: 'gh-auth', blocking: false, cmd: 'gh auth login',
+    text: 'Sign the GitHub CLI in to your account: in a terminal run `gh auth login` and follow the steps (it opens your browser).' },
+  ghMise: { id: 'gh-auth', blocking: false, cmd: 'mise exec -- gh auth login',
+    text: 'Sign the GitHub CLI in to your account: in a terminal run `mise exec -- gh auth login` and follow the steps (it opens your browser).' },
+  podmanOld: (v) => ({ id: 'podman-old', blocking: false, cmd: '-',
+    text: `Your Linux ships Podman ${v}; Podman ≥4.9 needs Ubuntu 24.04+/Debian 13+ or packages from podman.io.` }),
+};
 
 // The MemPalace palace: created once in a kit-owned empty folder; stdin is closed so init skips its mining prompt.
 export function palaceInitStep(lock, os, dir) {
