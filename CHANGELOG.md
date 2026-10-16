@@ -2,6 +2,10 @@
 
 What changed in each Founder Kit release, in plain words. `fk update` shows the entries between your version and the new one.
 
+## v0.9.0 (2026-10-16)
+
+Agents no longer redo work only you can judge (images, video, audio, copy, designs) in an endless loop. Before the first generate or render call in a session, the agent shows you a cheap preview (an outline, storyboard, thumbnails or a sample) and asks what done looks like and how many attempts you want. After 3 such calls without hearing from you (change it with `fk-approve rounds <n|off>`), it stops, shows what it has and asks before going on. It also offers ideas from other chats instead of applying them unasked. Code work is not affected. Kickoff now asks for your attempt count.
+
 ## v0.8.1 (2026-10-14)
 
 Installer fixes found by the first real-install tests. A palace that `mempalace init` has just set up now counts as ready, so the installer no longer stays red and reruns init (the palace folder only appears on the first save). On Linux, codebase-memory now installs where a user's default settings make `~/.local/bin` group-writable, which its installer refuses. On macOS, the installer no longer prints shell errors while recording what was already on the computer.

@@ -171,6 +171,8 @@ export const CASES = [
   ['cloud deploy with budget', 'ask', () => bash('vercel deploy --prod')],
   ['wrangler deploy without budget', 'deny', () => bash('npx wrangler deploy')],
   ['netlify deploy --prod without budget', 'deny', () => bash('netlify deploy --prod')],
+  ['generate call before a confirmed brief', 'deny', () => pre('mcp__studio__generate_image', { prompt: 'a poster' })],
+  ['non-producing MCP call', 'allow', () => pre('mcp__tracker__create_issue', { title: 'x' })],
   ['tsconfig: add noImplicitAny false', 'deny', (d) => pre('Edit', { file_path: at(d, 'tsconfig.json'), old_string: '"strict": true', new_string: '"strict": true,\n    "noImplicitAny": false' })],
   ['real key format in a test file', 'deny', (d) => pre('Write', { file_path: at(d, 'tests/aws.test.ts'), content: 'const k = "AKIA' + 'Q7WERTYUIOPASDF2";' })],
   ['new .eslintignore excluding src', 'deny', (d) => pre('Write', { file_path: at(d, '.eslintignore'), content: 'src/**\n' })],

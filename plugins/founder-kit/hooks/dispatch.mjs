@@ -13,11 +13,11 @@ const FK_CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bi
 const CLI_NOTE = `fk CLI: if "fk" is not found, run: node "${path.resolve(FK_CLI)}"`;
 
 // Guards load only when the project has opted in, so the inert path stays tiny.
-let pointer, gate, PRE_GUARDS;
+let pointer, gate, iteration, PRE_GUARDS;
 async function loadGuards() {
-  const [p, git, secret, g, install, cloud] = await Promise.all(['pointer', 'git', 'secret', 'gate', 'install', 'cloud']
+  const [p, git, secret, g, install, cloud, it] = await Promise.all(['pointer', 'git', 'secret', 'gate', 'install', 'cloud', 'iteration']
     .map((n) => import(`./guards/${n}.mjs`)));
-  pointer = p.pointer; gate = g; PRE_GUARDS = [git, secret, g, install, cloud];
+  pointer = p.pointer; gate = g; iteration = it; PRE_GUARDS = [git, secret, g, install, cloud, it];
 }
 const out = (obj) => { if (obj) process.stdout.write(JSON.stringify(obj)); };
 const context = (event, text) => ({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
@@ -55,6 +55,8 @@ async function areaContext(root, input, files) {
 }
 
 async function postToolUse({ root, input, tool, ti }) {
+  try { iteration.observe({ root, input, tool, ti }); } catch (e) { log(root, { event: 'PostToolUse', guard: 'iteration-guard', decision: 'allow', error: String(e?.message || e) }); }
+  if (tool === 'AskUserQuestion') return null;
   let touched = [];
   try { touched = (await import('./authorship.mjs')).record(root, input, tool, ti); } catch (e) { log(root, { event: 'PostToolUse', guard: 'authorship', decision: 'allow', error: String(e?.message || e) }); }
   if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(tool)) {
@@ -116,7 +118,7 @@ function directive(root, line, notes, session) {
   }
   if (/^fk-approve[ \t]+budget\b/i.test(line)) return notes.push('fk: budget line not understood. Format: fk-approve budget <provider> <usd/month> [hard-cap]. Nothing recorded.');
   for (const d of extraDirectives) if (d.match(line)) return d.apply(root, line, notes, session);
-  return notes.push(`fk: "${line.slice(0, 60)}" not understood. Formats: fk-override <guard> <reason> | fk-approve tool <name@version|enforce> <reason> | fk-approve budget <provider> <usd/month> [hard-cap]. Nothing recorded.`);
+  return notes.push(`fk: "${line.slice(0, 60)}" not understood. Formats: fk-override <guard> <reason> | fk-approve tool <name@version|enforce> <reason> | fk-approve budget <provider> <usd/month> [hard-cap] | fk-approve rounds <n|off>. Nothing recorded.`);
 }
 
 // Claude Code exports CLAUDE_PLUGIN_ROOT to plugin hook processes, not to commands the Bash tool runs. A dispatcher
@@ -132,6 +134,7 @@ const UNTRUSTED = 'fk: this hook is not running as the installed founder-kit plu
 
 function userPromptSubmit({ root, input }) {
   const session = input.session_id || null;
+  try { iteration.founderSpoke(root, input); } catch (e) { log(root, { event: 'UserPromptSubmit', guard: 'iteration-guard', decision: 'allow', error: String(e?.message || e) }); }
   const lines = String(input.prompt || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (!lines.some((l) => DIRECTIVE.test(l))) return null;
   if (!pluginRuntime()) {

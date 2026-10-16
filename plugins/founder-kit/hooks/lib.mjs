@@ -6,7 +6,7 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const GUARDS = ['secret-guard', 'gate-guard', 'install-guard', 'cloud-guard', 'git-guard'];
+export const GUARDS = ['secret-guard', 'gate-guard', 'install-guard', 'cloud-guard', 'git-guard', 'iteration-guard'];
 // Names a founder may override with `fk-override <name> <reason>`: the guards, task-check (read by `fk task done`)
 // and kickoff (`fk kickoff release` before docs/00-constraints.md is committed).
 export const OVERRIDABLE = [...GUARDS, 'task-check', 'kickoff'];

@@ -2,7 +2,7 @@
 
 Founder Kit lets someone who is **not** a programmer build a real product with AI agents in Claude Code. [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) (OMC) runs the development workflow: planning, building, verifying, reviewing. The kit never replaces it. It adds the founder layer on top (idea, honest review, decisions, brand, journal) and light governance (records, checks and guards) so the work keeps to what you agreed, in any kind of project.
 
-> Status: **v0.8.1**. The rules come from real projects, mistakes included. Expect changes.
+> Status: **v0.9.0**. The rules come from real projects, mistakes included. Expect changes.
 
 ## Who it is for, and what you get
 
@@ -87,7 +87,7 @@ An add-on that brings its own workflow, hooks or rewrites of CLAUDE.md is cut do
 
 ## Guards, and how strong they really are
 
-**What they guard.** Five guards run as Claude Code hooks: **secrets** (secret-shaped strings in files or commands, reading `.env`), **gates** (loosening a lint, test or CI setting, the check command or the kit's own files), **installs** (only approved tools at pinned versions; it only logs until you approve a first tool), **cloud** (spending without a budget) and **git** (`--no-verify`, overriding the hooks path, force-pushing main). They log to the kit's folder in your home directory (`~/.fk/`); `fk audit` summarizes it in plain words. They never block OMC's workflow, and a false alarm on ordinary work is treated as a bug: new config files, tightening a rule, local-dev passwords in compose files and made-up secrets in test folders all pass.
+**What they guard.** Six guards run as Claude Code hooks: **secrets** (secret-shaped strings in files or commands, reading `.env`), **gates** (loosening a lint, test or CI setting, the check command or the kit's own files), **installs** (only approved tools at pinned versions; it only logs until you approve a first tool), **cloud** (spending without a budget), **git** (`--no-verify`, overriding the hooks path, force-pushing main) and **iteration** (endless redo loops on work only you can judge, see below). They log to the kit's folder in your home directory (`~/.fk/`); `fk audit` summarizes it in plain words. They never block OMC's workflow, and a false alarm on ordinary work is treated as a bug: new config files, tightening a rule, local-dev passwords in compose files and made-up secrets in test folders all pass.
 
 **Threat model, plainly.** Agents run as you, so anything you can write, they can write, `~/.fk/` included. The guards are text checks: they stop an agent that drifts from what was agreed, not one that sets out to get around them (an inline script, a path spelled another way). The kit does not claim its records cannot be forged. Against a determined agent the real boundary is **Claude Code's sandbox**:
 - `fk init` merges deny rules for `~/.fk` into the project's `.claude/settings.json` (file tools and recognised shell file commands), a sandbox write-deny for `~/.fk`, and lets the `fk` CLI run outside the sandbox (Claude Code asks first). `fk uninstall` takes exactly these out again.
@@ -98,11 +98,12 @@ An add-on that brings its own workflow, hooks or rewrites of CLAUDE.md is cut do
 
 | You type | What it does |
 |---|---|
-| `fk-override <guard> <reason>` | Lets one guard pass for 30 minutes (`secret`, `gate`, `install`, `cloud`, `git`, `task-check`, `kickoff`). While a `gate` override is active, gate-file changes made from the shell become the new accepted state (recorded in `fk audit`). |
+| `fk-override <guard> <reason>` | Lets one guard pass for 30 minutes (`secret`, `gate`, `install`, `cloud`, `git`, `iteration`, `task-check`, `kickoff`). While a `gate` override is active, gate-file changes made from the shell become the new accepted state (recorded in `fk audit`). |
 | `fk-approve proposal <id> [without <names>]` | Approves the tool proposal exactly as you saw it |
 | `fk-approve tool <name@version \| mcp:<name> \| plugin:<id> \| brew:<name> \| enforce> <reason>` | Adds one tool to the approved list (or switches the install guard to blocking) |
 | `fk-approve budget <provider> <usd/month> [hard-cap]` | Records a monthly spending cap |
 | `fk-approve gates <check\|fast_gates\|runner> "<command>" <reason>` | Lets a gate command change other than by adding steps (once, 30 minutes) |
+| `fk-approve rounds <n\|off>` | Sets how many generate/render calls agents may make between check-ins with you (default 3), or turns the iteration guard off |
 | `fk-approve baseline <reason>` | Lets `fk baseline record` replace an existing baseline (once, 30 minutes) |
 | `fk-approve update <version> <reason>` | Lets an agent run `fk update --yes` to exactly that version (once, 30 minutes) |
 
@@ -111,6 +112,7 @@ Some steps are hard stops with no override: taking the kit out (`fk uninstall`, 
 **Known gaps** (the backstops are `fk audit`, session-bound approvals and after-the-fact checks):
 - Approval records are written only by the hook Claude Code starts for the installed plugin; an agent that copies the kit and fakes that environment in a shell the guard does not see could still write one. `fk audit` lists every approval without a matching typed line.
 - A gate file changed by a shell command is caught right after the command, not before.
+- The iteration guard knows producing tools by name (generate, render, export, compose… and a few renderers such as `remotion render`); a tool named otherwise is counted only after you list it in `.fk/config.json` `producers`, and a developer tool it miscounts goes in `not_producers`. A scheduled or looped prompt (`/loop`) looks like you speaking and resets its count.
 - A forged `.fk/` file that was also committed is trusted on a fresh machine; `fk audit` and code review are there to catch it.
 - If git does not run the kit's pre-commit hook in a clone (another hooks folder such as husky), session start and `fk doctor` say so; `fk init --chain` adds the kit's call to that folder.
 

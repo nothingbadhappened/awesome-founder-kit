@@ -14,6 +14,7 @@ AskUserQuestion, 2–4 questions per call, recommended option first. Save to `do
 - Must-have integrations (stores, payments, existing accounts).
 - Team/time: solo + agents? weekly hours? deadlines?
 - Existing assets: brand, domain, accounts, code.
+- Work judged by eye or ear (media, copy, design): how many attempts before the agent checks back (2 / 3 / 5)? Record it in `00-constraints.md`; to enforce a value other than 3, the founder types `fk-approve rounds <n>`.
 - Project shape: (a) no software; (b) static/marketing site; (c) web app with accounts/data; (d) (c) + native mobile; (e) any + AI/ML.
 
 **Hard stop:** no analyst or architect agent starts until market, platforms and must-have integrations are written in `00-constraints.md`.
