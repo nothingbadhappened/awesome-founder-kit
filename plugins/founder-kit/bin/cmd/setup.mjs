@@ -1,14 +1,21 @@
-// fk setup [--yes] [--dry-run] [--only <tool>] | fk setup --shim | fk setup --remove-shim   (--with-gh: accepted, no effect; gh is a base tool)
+// fk setup [--yes] [--dry-run] [--with <id,id>] [--all] [--only <tool>] | fk setup --shim | fk setup --remove-shim   (--with-gh = --with gh)
 // Checks the kit's base tools against compat.lock.json, shows one plain-language plan, installs and configures
-// what is missing after one yes, verifies, and records the result. Exit 0 when nothing is red.
+// what is missing after one yes, verifies, and records the result. Exit 0 when nothing is red. Core tools are always
+// planned; optional ones only when asked for (--with, --all, --only) or approved in the project's .fk/toolchain.json.
 import readline from 'node:readline';
-import { loadLock, detect, TOOLS, osName, realExec, appendLedger, writeStatus, statusFile, shim } from './setup/core.mjs';
-import { readJson } from '../../hooks/lib.mjs';
+import { loadLock, detect, TOOLS, osName, realExec, appendLedger, writeStatus, statusFile, shim, wantedTools, projectTools } from './setup/core.mjs';
+import { readJson, findRoot } from '../../hooks/lib.mjs';
 import { describe, notePreExisting } from './setup/ledger.mjs';
 import { claudeAncestor } from './steward/proc.mjs';
 
-const LABEL = { green: '\x1b[32mgreen \x1b[0m', yellow: '\x1b[33myellow\x1b[0m', red: '\x1b[31mred   \x1b[0m' };
-const USAGE = `usage: fk setup [--yes] [--dry-run] [--only <${TOOLS.map((t) => t.id).join('|')}>] | fk setup --shim | fk setup --remove-shim`;
+const LABEL = { green: '\x1b[32mgreen   \x1b[0m', yellow: '\x1b[33myellow  \x1b[0m', red: '\x1b[31mred     \x1b[0m', optional: '\x1b[2moptional\x1b[0m' };
+const USAGE = `usage: fk setup [--yes] [--dry-run] [--with <id,id>] [--all] [--only <id>] | fk setup --shim | fk setup --remove-shim
+  ids: ${TOOLS.map((t) => t.id).join(', ')} (core, always checked: ${TOOLS.filter((t) => t.core).map((t) => t.id).join(', ')})`;
+
+function optionalHint(rows, out) {
+  const ids = rows.filter((r) => r.level === 'optional').map((r) => r.id);
+  if (ids.length) out(`\nOptional tools stay out until a project needs one (its toolchain proposal names it). To add one now: fk setup --with <id> (${ids.join(', ')}).`);
+}
 
 function table(rows, out) {
   const w = Math.max(...rows.map((r) => r.label.length));
@@ -40,7 +47,12 @@ export async function runSetup(args = [], deps = {}) {
   const lock = loadLock();
   if (!lock) { out('fk setup: compat.lock.json is missing or unreadable; reinstall the kit.'); return 2; }
   if (oi >= 0 && !TOOLS.some((t) => t.id === only)) { out(USAGE); return 2; }
-  const opts = { env, os: o, has: deps.has };
+  const wi = args.indexOf('--with');
+  const asked = [...(wi >= 0 ? String(args[wi + 1] || '').split(',').map((x) => x.trim()).filter(Boolean) : []),
+    ...(args.includes('--all') ? ['all'] : []), ...(args.includes('--with-gh') ? ['gh'] : []), ...(only ? [only] : [])];
+  if ((wi >= 0 && !args[wi + 1]) || asked.some((id) => id !== 'all' && !TOOLS.some((t) => t.id === id))) { out(USAGE); return 2; }
+  const want = wantedTools([...asked, ...projectTools(findRoot(deps.cwd)?.root)], o);
+  const opts = { env, os: o, has: deps.has, want };
   const pick = (rows) => (only ? rows.filter((r) => r.id === only) : rows);
   // The user-level `fk` command (C3): the plugin's bin/ reaches only the Bash tool, not PowerShell or a terminal.
   const sopts = { env, userPath: deps.userPath, dry };
@@ -61,10 +73,12 @@ export async function runSetup(args = [], deps = {}) {
   if (!todo.length) {
     if (!dry) { found(); writeStatus(only ? mergeRows(readJson(statusFile(), { tools: {} }), rows) : rows, lock); addShim(); }
     out(anyRed(rows) ? '\nSome tools need attention (see red rows); nothing here can be fixed automatically.' : '\nAll base tools are ready.');
+    optionalHint(rows, out);
     founderSteps(rows, out);
     return anyRed(rows) ? 1 : 0;
   }
 
+  optionalHint(rows, out);
   out('\nPlan (everything below is free and open source):');
   todo.forEach((r, i) => {
     const verb = { missing: 'Install', 'below-floor': 'Update', 'plugin-missing': 'Add the Claude Code plugin of' }[r.reason] || 'Set up';

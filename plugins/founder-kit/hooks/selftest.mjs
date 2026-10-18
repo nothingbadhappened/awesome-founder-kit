@@ -38,7 +38,7 @@ export function makeFixture({ fk = true } = {}) {
   fs.writeFileSync(path.join(dir, '.env'), 'API_TOKEN=do-not-read\n');
   fs.writeFileSync(path.join(dir, '.env.example'), 'API_TOKEN=\n');
   if (fk) {
-    writeJson(path.join(dir, '.fk', 'config.json'), { runner: 'npm run', stack: 'node' });
+    writeJson(path.join(dir, '.fk', 'config.json'), { check: 'npm run check', stack: 'node' });
     writeJson(path.join(dir, '.fk', 'toolchain.json'), { approved: ['eslint@9.12.0', 'ruff==0.6.9', 'vitest@2.1.4', 'node@22', 'brew:jq'] });
     writeJson(path.join(dir, '.fk', 'budgets.json'), { providers: { vercel: { monthly_usd: 20, hard_cap: true } } });
     takeSnapshot(dir);

@@ -40,7 +40,7 @@ Created by `fk task new` (Context: the ADRs and lessons for these paths; refresh
 |---|---|---|
 
 ## Evidence and review
-- `<runner> check` / `e2e` / `eval`:
+- Check command / e2e / eval:
 - `fk task check {{id}}`:
 
 ## Follow-ups

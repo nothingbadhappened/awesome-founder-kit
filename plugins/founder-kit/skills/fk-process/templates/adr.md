@@ -15,4 +15,4 @@ Date: YYYY-MM-DD · Status: proposed | accepted (founder) | auto-decided, revers
 - Negative / risks:
 - Follow-ups:
 ## Fitness gate
-- Boundary or data rule this ADR sets → a `fit:` rule above (`fk gates build`), else a check in `<runner> check` (name it), or `GATE-MISSING: <rule>`.
+- Boundary or data rule this ADR sets → a `fit:` rule above (`fk gates build`), else a check in the project's check command (name it), or `GATE-MISSING: <rule>`.

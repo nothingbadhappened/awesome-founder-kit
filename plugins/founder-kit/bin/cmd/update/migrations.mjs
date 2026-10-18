@@ -6,7 +6,7 @@
 // in that project finishes it.
 import fs from 'node:fs';
 import path from 'node:path';
-import { readJson, writeJson, fkHome } from '../../../hooks/lib.mjs';
+import { readJson, writeJson, fkHome, legacyRunner, hashFile, readSnapshot, refreshSnapshot } from '../../../hooks/lib.mjs';
 
 export const MIGRATIONS = [
   {
@@ -15,6 +15,21 @@ export const MIGRATIONS = [
     run: ({ state, root }) => {
       if (!root) return false;
       state.root = path.resolve(root);
+      return true;
+    },
+  },
+  {
+    to: 2,
+    what: 'drop the runner "npm run" that fk init wrote into every config before v1 (never chosen with fk config set)',
+    run: ({ root }) => {
+      if (!root) return false;
+      const rel = '.fk/config.json';
+      const file = path.join(root, rel);
+      const cfg = readJson(file, null);
+      if (!cfg || !legacyRunner(cfg, root)) return true;
+      const trusted = readSnapshot(root).files?.[rel] === hashFile(root, rel); // never vouch for a hand-edited config
+      writeJson(file, { ...cfg, runner: null });
+      if (trusted) refreshSnapshot(root, [rel]);
       return true;
     },
   },

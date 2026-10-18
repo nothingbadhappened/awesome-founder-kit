@@ -4,33 +4,56 @@
 #   curl -fsSL https://raw.githubusercontent.com/nothingbadhappened/awesome-founder-kit/main/install/install.sh | bash
 #
 # Options (after `bash -s --` when piped): --yes (no question, for CI)  --dry-run (print the commands only)
-# (--with-gh is accepted and changes nothing: the GitHub CLI is a base tool now.)
+#   --with <id,id> / --all: also set up optional tools (piped: FK_WITH=<id,id>, FK_WITH=all); --with-gh = --with gh.
 #   --uninstall [--keep <ids>] [--only <ids>] [--plugin-only]: take back what Founder Kit installed (fk uninstall --system;
 #   piped: FK_UNINSTALL=1). Only the founder runs it, in a terminal.
 #
-# Checks every base tool, prints one plan, asks once, installs what is missing (into your home folder where the
-# tool allows), configures, verifies, then adds the founder-kit plugin. Re-running is safe: present tools are left
+# Checks the core tools (git, Node.js, Claude Code, oh-my-claudecode, gitleaks) and lists the optional ones, prints one plan, asks
+# once, installs what is missing (into your home folder where the tool allows), configures, verifies, then adds the
+# founder-kit plugin. Optional tools are set up only when asked for (here, or later with fk setup --with <id>, usually
+# when a project's toolchain proposal names one). Re-running is safe: present tools are left
 # alone, nothing is uninstalled or downgraded. Every change is logged to ~/.fk/install-ledger.jsonl with its undo
 # command, and what was already here is logged as pre-existing (never removed by the kit).
 # Versions mirror plugins/founder-kit/compat.lock.json (a test fails when they drift).
 set -u
 
-YES=0; DRY=0; UNINSTALL=0; UN_ARGS=""
+YES=0; DRY=0; UNINSTALL=0; UN_ARGS=""; WITH=$(printf '%s' "${FK_WITH:-}" | tr ',' ' ')
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) YES=1 ;;
     --dry-run) DRY=1 ;;
-    --with-gh) ;;
+    --with) [ $# -ge 2 ] || { echo "usage: install.sh --with <id,id>"; exit 2; }; WITH="$WITH $(printf '%s' "$2" | tr ',' ' ')"; shift ;;
+    --all) WITH="$WITH all" ;;
+    --with-gh) WITH="$WITH gh" ;;
     --uninstall) UNINSTALL=1 ;;
     --plugin-only) UN_ARGS="$UN_ARGS --plugin-only" ;;
     --keep|--only) [ $# -ge 2 ] || { echo "usage: install.sh $1 <ids>"; exit 2; }; UN_ARGS="$UN_ARGS $1 $2"; shift ;;
-    *) echo "usage: install.sh [--yes] [--dry-run] | install.sh --uninstall [--dry-run] [--yes] [--keep <ids>] [--only <ids>] [--plugin-only]"; exit 2 ;;
+    *) echo "usage: install.sh [--yes] [--dry-run] [--with <id,id>] [--all] | install.sh --uninstall [--dry-run] [--yes] [--keep <ids>] [--only <ids>] [--plugin-only]"; exit 2 ;;
   esac
   shift
 done
 [ "${FK_YES:-}" = 1 ] && YES=1
 [ "${FK_DRY_RUN:-}" = 1 ] && DRY=1
 [ "${FK_UNINSTALL:-}" = 1 ] && UNINSTALL=1
+
+# Optional tools: listed, set up only when asked for. The core (git, node, claude-code, oh-my-claudecode, gitleaks) always is.
+# Mirrors the core flag in plugins/founder-kit/bin/cmd/setup/core.mjs TOOLS (a test keeps them in step).
+OPTIONAL="git-lfs uv mise just gh podman podman-compose codebase-memory-mcp mempalace skillspector"
+set -f # $WITH is split on spaces only, never globbed
+for t in $WITH; do
+  case " $OPTIONAL all " in *" $t "*) ;; *) echo "install.sh: unknown optional tool: $t (choose from: $OPTIONAL, or all)"; exit 2 ;; esac
+done
+set +f
+want() { # want <id>: a core tool, or an optional one asked for (MemPalace, SkillSpector and compose install with uv;
+  # just, and gh on Linux, with mise: apt's gh is below the floor). Mirrors needs in core.mjs TOOLS.
+  case " $OPTIONAL " in *" $1 "*) ;; *) return 0 ;; esac
+  case " $WITH " in *" all "*|*" $1 "*) return 0 ;; esac
+  case "$1" in
+    uv) want mempalace || want skillspector || want podman-compose ;;
+    mise) want just || { [ "$OSN" = linux ] && want gh; } ;;
+    *) return 1 ;;
+  esac
+}
 
 # ---- pins (compat.lock.json, checked 2026-10-14) ----
 LOCK_CHECKED=2026-10-14
@@ -232,7 +255,7 @@ state() {
   if [ "$OSN" = mac ] && has brew; then grade mise "brew install mise" "brew uninstall mise"
   else grade mise "curl -fsSL https://mise.run | MISE_VERSION=v$MISE_VERSION sh" "rm ~/.local/bin/mise"; fi
   # mise here, or installed by the step above in this run: just and gh come pinned through it (steps run in plan order).
-  local mise_ok=""; { has mise || [ "${LEVELS[$(last)]}" = red ]; } && mise_ok=1
+  local mise_ok=""; { has mise || { [ "${LEVELS[$(last)]}" = red ] && want mise; }; } && mise_ok=1
 
   local jv; jv=$(ver just --version)
   [ -z "$jv" ] && has mise && jv=$(ver mise exec -- just --version)
@@ -376,13 +399,28 @@ state() {
   row founder-kit "Founder Kit plugin" "about 2 MB" "the founder layer itself" ""
   if plugin_installed founder-kit; then VERSIONS[$(last)]=installed
   else set_red missing "not installed"; plugin_steps founder-kit "$FK_MARKETPLACE" "$FK_PLUGIN" awesome-founder-kit; fi
+
+  # An optional tool nobody asked for: listed, never planned. Missing is neutral; a copy that is here is not set up
+  # further. Only an installed copy below the floor stays red.
+  for i in "${!IDS[@]}"; do
+    want "${IDS[$i]}" && continue
+    FOUNDERS[$i]=""
+    case "${REASONS[$i]}" in
+      missing) LEVELS[$i]=optional; REASONS[$i]=optional; NOTES[$i]="optional; proposed per project when it needs it" ;;
+      below-floor) continue ;;
+      *) [ "${LEVELS[$i]}" = red ] && { LEVELS[$i]=yellow; NOTES[$i]="${NOTES[$i]}; fk setup --with ${IDS[$i]} sets it up"; } ;;
+    esac
+    STEPS=$(printf '%s' "$STEPS" | awk -F'\t' -v id="${IDS[$i]}" '$1 != id && NF { print }')
+    [ -n "$STEPS" ] && STEPS="$STEPS
+"
+  done
 }
 
 show_table() {
   local i col
   for i in "${!IDS[@]}"; do
-    case "${LEVELS[$i]}" in green) col=$G ;; yellow) col=$Y ;; *) col=$R ;; esac
-    printf '  %s%-7s%s %-22s %s\n' "$col" "${LEVELS[$i]}" "$N" "${LABELS[$i]}" "$(printf '%s' "${VERSIONS[$i]}${VERSIONS[$i]:+${NOTES[$i]:+, }}${NOTES[$i]}")"
+    case "${LEVELS[$i]}" in green) col=$G ;; yellow) col=$Y ;; optional) col=$D ;; *) col=$R ;; esac
+    printf '  %s%-8s%s %-22s %s\n' "$col" "${LEVELS[$i]}" "$N" "${LABELS[$i]}" "$(printf '%s' "${VERSIONS[$i]}${VERSIONS[$i]:+${NOTES[$i]:+, }}${NOTES[$i]}")"
   done
 }
 idx_of() { local i; for i in "${!IDS[@]}"; do [ "${IDS[$i]}" = "$1" ] && { echo "$i"; return; }; done; }
@@ -436,6 +474,8 @@ echo "Checking what is already on this computer ($(uname -s) $(uname -m))..."
 refresh_path
 state
 show_table
+opt=""; for i in "${!IDS[@]}"; do [ "${LEVELS[$i]}" = optional ] && opt="$opt${opt:+, }${IDS[$i]}"; done
+[ -n "$opt" ] && { echo; echo "Optional tools stay out until a project needs one (its toolchain proposal names it). To add one now: fk setup --with <id> ($opt)."; }
 
 if [ -z "$STEPS" ]; then
   [ "$DRY" = 1 ] || { write_status; write_found; }

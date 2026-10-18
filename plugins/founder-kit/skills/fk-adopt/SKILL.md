@@ -24,7 +24,7 @@ Until `fk adopt apply`, nothing in the repo changes: work lives in the kit state
 
 ## A3 Reconstruct the rest (drafts only)
 10. From the survey, the code (CBM `get_architecture`, `search_graph`) and the mined sessions, add what the docs did not say; edit the compiled drafts, never replace them:
-   - `00-constraints.md`: product, users, red lines, budget (fk-kickoff part A).
+   - `00-constraints.md`: product, users, budget, and the rules the product must keep as numbered `BR-n` lines (fk-kickoff part A, "Business rules"); a rule found only in code is written `- BR-n (draft): …` for the founder to confirm (drafts are not checked).
    - `adr/NNNN-<slug>.md`: decisions visible in the code, `Status: reconstructed`, with `applies_to:` globs.
    - `PROJECT.md` (at most 60 lines, summaries that link) if A2 made none; `lessons.md` entries from reverts and fix chains.
    - `impact-map.yaml`: co-change pairs as impact rules.

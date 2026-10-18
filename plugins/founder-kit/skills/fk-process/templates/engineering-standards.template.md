@@ -1,6 +1,6 @@
 # {{Project}} Engineering Standards (split into drydock's docs/standards/)
 
-Each `→` section merges under the matching heading of the named drydock file; keep drydock's seeded rules. **[auto]** = enforced by `{{runner}} check`. A rule that seems wrong: follow it, log a lesson, raise a separate reviewed task; never edit or ignore it mid-task.
+Each `→` section merges under the matching heading of the named drydock file; keep drydock's seeded rules. **[auto]** = enforced by the check command (`{{check}}`). A rule that seems wrong: follow it, log a lesson, raise a separate reviewed task; never edit or ignore it mid-task.
 
 ## → architecture.md: Module boundaries / Dependency direction
 - Modular monolith (unless architecture says otherwise). Modules: {{modules}}; one public entry point each; other modules import only that. **[auto]** {{boundary_tool}}.
@@ -29,6 +29,6 @@ Each `→` section merges under the matching heading of the named drydock file; 
 
 ## → process.md: Operations and hygiene
 - Structured logs with request/job IDs and pseudonymous user refs; new job/route/adapter gets metrics, alert, runbook line.
-- Every created container, volume and service carries a project label with a repo-folder fingerprint; `{{runner}} sweep` acts on labels only, never names.
+- Every created container, volume and service carries a project label with a repo-folder fingerprint; `fk sweep` acts on labels only, never names.
 - Agent worktrees live outside `.claude/` and outside any tool-ignored folder; on Windows keep paths short.
 - Agent instructions have one source (`CLAUDE.md`, `.claude/skills/`). Copies for other tools (`AGENTS.md`, `.agents/skills/`) are generated with a `GENERATED` first line; a gate fails on drift and prints the fix command.

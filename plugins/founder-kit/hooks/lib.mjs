@@ -18,8 +18,8 @@ export const HOOK_OWNED = new Set(['.fk/ledger.jsonl']);
 const OVERRIDE_MS = 30 * 60 * 1000;
 
 export const DEFAULT_CONFIG = {
-  runner: 'npm run',
-  check: null, // full command; defaults to `<runner> check`
+  runner: null, // no default: the kit never assumes a package manager or task runner
+  check: null, // full command, discovered from the project or asked once; unset = no gates agreed yet
   stack: null,
   fast_gates: null,
   paths: { adr: 'docs/adr', constraints: 'docs/00-constraints.md', standards: 'docs/standards' },
@@ -92,6 +92,12 @@ export function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
 }
+
+// Before v1, `fk init` wrote runner "npm run" into every project's config. That value counts as unset until a
+// `fk config set runner` chose it (a gate-change or config-set line in the log).
+export const LEGACY_RUNNER = 'npm run';
+export const legacyRunner = (config, root) => config?.runner === LEGACY_RUNNER
+  && !readLog(root).some((r) => (r.decision === 'gate-change' && r.key === 'runner') || (r.decision === 'config-set' && /^runner = /.test(r.reason || '')));
 
 export function loadConfig(root) {
   const c = readJson(path.join(root, '.fk', 'config.json'), {});

@@ -157,7 +157,6 @@ function usage(root) {
   say(`Claude Code usage, last ${Math.min(7, j.daily.length)} days (from ${spec}):`);
   for (const d of j.daily.slice(-7)) say(`  ${d.date || d.period}  ${fmt(d.totalCost ?? d.costUSD ?? 0)}  ${Number(d.totalTokens ?? 0).toLocaleString('en-US')} tokens`);
   if (j.totals) say(`  total ${fmt(j.totals.totalCost ?? j.totals.costUSD ?? 0)}`);
-  say('Pacing: plan for 80% of the limit you last actually hit; at most 3 agents at once; commit after every green slice.');
 }
 
 export default async function budget(args) {

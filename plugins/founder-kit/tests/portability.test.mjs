@@ -1,5 +1,6 @@
-// fk portability check / init on fixture repos: a web app with a database but no compose file, a Unity-like game with
-// large binaries outside Git LFS, a podcast without code, and a fully portable project. Temp folders only, no network.
+// fk portability check on fixture repos: a web app with a database but no way to get it, a Unity-like game with large
+// binaries outside Git LFS, a podcast without code, portable projects on several stacks (no tool is assumed). Temp
+// folders only, no network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -27,17 +28,15 @@ const status = (res) => Object.fromEntries(res.items.map((i) => [i.id, i.status]
 const note = (res, id) => res.items.find((i) => i.id === id).note;
 const fk = (dir, args) => spawnSync(process.execPath, [FK, ...args], { cwd: dir, encoding: 'utf8' });
 
-const JUSTFILE = 'setup:\n    mise install\n    npm ci\n\ndev: up\n    npm run dev\n\nup:\n    podman compose up -d\n\ncheck:\n    npm test\n';
 const PORTABLE = {
-  '.mise.toml': '[tools]\nnode = "22.11.0"\njust = "1.58.0"\n',
+  '.nvmrc': '22.11.0\n',
   '.gitattributes': '* text=auto eol=lf\n*.png filter=lfs diff=lfs merge=lfs -text\n',
-  justfile: JUSTFILE,
-  'package.json': JSON.stringify({ name: 'app', dependencies: { pg: '8.13.0', express: '4.21.1' } }),
+  'package.json': JSON.stringify({ name: 'app', scripts: { dev: 'node src/db.js', test: 'node --test' }, dependencies: { pg: '8.13.0', express: '4.21.1' } }),
   'package-lock.json': '{"lockfileVersion":3}',
   'src/db.js': 'export const url = process.env.DATABASE_URL;\n',
   '.env.example': 'DATABASE_URL=\n',
   'compose.yaml': 'services:\n  db:\n    image: docker.io/library/postgres:17\n',
-  '.github/workflows/fresh-clone.yml': 'jobs:\n  fresh:\n    steps:\n      - run: mise exec -- just setup\n      - run: mise exec -- just check\n',
+  '.github/workflows/ci.yml': 'jobs:\n  test:\n    steps:\n      - run: npm ci\n      - run: npm test\n',
   'tsconfig.json': '{ "compilerOptions": { "outDir": "<you>/dist", "baseUrl": "./src" } }\n',
 };
 
@@ -48,20 +47,20 @@ test('fully portable project: every item passes; --strict exits 0', () => {
     assert.equal(res.kind, 'software');
     assert.equal(res.warn, 0, JSON.stringify(res.items, null, 1));
     assert.match(note(res, 'lfs'), /all in Git LFS/);
-    assert.match(note(res, 'services'), /compose\.yaml runs postgres/);
+    assert.match(note(res, 'services'), /postgres: compose\.yaml/);
     const r = fk(dir, ['portability', 'check', '--strict']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /0 warn/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('web app with a database but no compose file: services warn; warnings exit 0, --strict exits 1', () => {
+test('web app with a database and no way to get it: services warn without naming one tool as the fix; --strict exits 1', () => {
   const { 'compose.yaml': _, ...rest } = PORTABLE;
   const dir = repo(rest);
   try {
     const res = check(dir);
     assert.equal(status(res).services, 'warn');
-    assert.match(note(res, 'services'), /uses postgres but no compose\.yaml defines it/);
+    assert.match(note(res, 'services'), /uses postgres but nothing says how a fresh clone gets it: .*\(e\.g\. compose\.yaml, a devcontainer\)/);
     assert.equal(res.warn, 1);
     assert.equal(fk(dir, ['portability', 'check']).status, 0);
     assert.equal(fk(dir, ['portability', 'check', '--strict']).status, 1);
@@ -112,7 +111,7 @@ test('podcast without code: code items skipped; machine paths and large files st
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('committed .env, unpinned mise versions and home-folder paths warn', () => {
+test('committed .env, unpinned versions (mise or a version file) and home-folder paths warn', () => {
   const home = '/' + 'home/' + 'someone/' + 'app';
   const dir = repo({ ...PORTABLE, '.env': 'DATABASE_URL=x\n', '.mise.toml': '[tools]\nnode = "latest"\n', 'config/app.json': JSON.stringify({ data: home }) });
   try {
@@ -121,30 +120,13 @@ test('committed .env, unpinned mise versions and home-folder paths warn', () => 
     assert.equal(s.tools, 'warn');
     assert.equal(s.paths, 'warn');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('fk portability init writes the justfile and fresh-clone CI, never over existing files', () => {
-  const dir = repo({ 'README.md': '# x\n' });
-  try {
-    let r = fk(dir, ['portability', 'init', '--dry-run']);
-    assert.match(r.stdout, /would create justfile/);
-    assert.equal(fs.existsSync(path.join(dir, 'justfile')), false);
-    r = fk(dir, ['portability', 'init']);
-    assert.equal(r.status, 0, r.stdout + r.stderr);
-    const jf = fs.readFileSync(path.join(dir, 'justfile'), 'utf8');
-    for (const recipe of ['setup:', 'dev: up', 'check:', 'down:']) assert.ok(jf.includes(`\n${recipe}`), recipe);
-    assert.match(jf, /mise install/);
-    assert.match(jf, /node scripts\/fk-boundaries\.mjs/);
-    const ci = fs.readFileSync(path.join(dir, '.github', 'workflows', 'fresh-clone.yml'), 'utf8');
-    assert.match(ci, /actions\/checkout@[0-9a-f]{40} # v/);
-    assert.match(ci, /jdx\/mise-action@[0-9a-f]{40} # v/);
-    assert.match(ci, /just setup[\s\S]*just check/);
-    fs.writeFileSync(path.join(dir, 'justfile'), 'mine:\n    echo mine\n');
-    r = fk(dir, ['portability', 'init']);
-    assert.match(r.stdout, /kept\s+justfile/);
-    assert.match(r.stdout, /kept\s+\.github\/workflows\/fresh-clone\.yml/);
-    assert.equal(fs.readFileSync(path.join(dir, 'justfile'), 'utf8'), 'mine:\n    echo mine\n');
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  const lts = repo({ ...PORTABLE, '.nvmrc': 'lts/*\n' });
+  try { assert.match(note(check(lts), 'tools'), /unpinned versions \(\.nvmrc: lts\/\*\)/); } finally { fs.rmSync(lts, { recursive: true, force: true }); }
+  // A range in "engines" states support; it pins nothing. An exact version does.
+  for (const [node, want] of [['>=20', 'warn'], ['^20.11.0', 'warn'], ['~20.11.0', 'warn'], ['20.11.1', 'pass']]) {
+    const d = repo({ ...PORTABLE, 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'node --test' }, engines: { node } }) });
+    try { assert.equal(status(check(d)).tools, want, node); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  }
 });
 
 test('fk adopt survey carries the portability gaps into the health report', async () => {
@@ -154,22 +136,20 @@ test('fk adopt survey carries the portability gaps into the health report', asyn
   try {
     const s = survey(dir, { skip: 'gitleaks,docker,sessions' });
     assert.equal(s.portability.warn, 1);
-    assert.match(surveyMd(s), /## Portability[\s\S]*Services in containers: uses postgres/);
+    assert.match(surveyMd(s), /## Portability[\s\S]*Services: uses postgres/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ---- v0.7 review ----
-const JUST_PIN = JSON.parse(fs.readFileSync(path.join(KIT, 'compat.lock.json'), 'utf8')).tools.just.version;
-
-test('kind-specific pin hints: a game or firmware project is pointed at its engine/toolchain, never at node', () => {
+test('game and firmware: the engine/toolchain item carries the pin; no node, mise or just hint', () => {
   const game = repo({ 'ProjectSettings/ProjectVersion.txt': 'm_EditorVersion: 2022.3.40f1\n', 'Assets/Scripts/Player.cs': 'public class Player {}\n' });
   const fw = repo({ 'platformio.ini': '[env:esp32]\nplatform = espressif32\n', 'src/main.cpp': 'void setup() {}\n' });
   try {
-    const g = note(check(game), 'tools'), f = note(check(fw), 'tools');
-    for (const t of [g, f]) assert.doesNotMatch(t, /node@/);
-    assert.match(g, /ProjectVersion\.txt/);
-    assert.match(f, /platformio\.ini \(platform = <name>@<x\.y\.z>\)/);
-    assert.match(f, /ESP-IDF/);
+    const g = check(game), f = check(fw);
+    assert.equal(status(g).tools, 'skip');
+    assert.equal(status(f).tools, 'skip');
+    assert.match(note(f, 'engine'), /platformio\.ini \(e\.g\. platform = espressif32@<x\.y\.z>\)/);
+    for (const r of [g, f]) assert.doesNotMatch(JSON.stringify(r), /node@|mise|just /);
   } finally { for (const d of [game, fw]) fs.rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -185,40 +165,85 @@ test('no code and no binaries: line endings are skipped; with binaries they are 
   try { assert.equal(status(check(pod)).attributes, 'warn'); } finally { fs.rmSync(pod, { recursive: true, force: true }); }
 });
 
-test('a justfile without just pinned in .mise.toml warns; init offers the line and never rewrites an existing mise file', () => {
-  const dir = repo({ ...PORTABLE, '.mise.toml': '[tools]\nnode = "22.11.0"\n' });
+// ---- v1: agnostic or absent (no stack is preferred) ----
+const CI = { '.gitattributes': '* text=auto eol=lf\n', '.gitlab-ci.yml': 'test:\n  script: [make check]\n' };
+const noTool = (res) => assert.doesNotMatch(JSON.stringify(res), /mise|justfile|just setup|podman|fk portability init/i);
+
+test('Python with a Makefile, .python-version and uv.lock: no runner or pin warning', () => {
+  const dir = repo({ ...CI, Makefile: 'check:\n\tuv run pytest\n', '.python-version': '3.12.7\n', 'uv.lock': 'version = 1\n',
+    'pyproject.toml': '[project]\nname = "app"\ndependencies = ["httpx==0.27.2"]\n', 'app/main.py': 'print(1)\n' });
+  try {
+    const res = check(dir), s = status(res);
+    assert.equal(s.commands, 'pass', note(res, 'commands'));
+    assert.match(note(res, 'commands'), /Makefile/);
+    assert.equal(s.tools, 'pass', note(res, 'tools'));
+    assert.match(note(res, 'tools'), /\.python-version/);
+    assert.equal(s.locks, 'pass');
+    noTool(res);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Cargo project with rust-toolchain.toml: clean', () => {
+  const dir = repo({ ...CI, 'Cargo.toml': '[package]\nname = "app"\nversion = "0.1.0"\n', 'Cargo.lock': 'version = 3\n',
+    'rust-toolchain.toml': '[toolchain]\nchannel = "1.82.0"\n', 'src/main.rs': 'fn main() {}\n' });
+  try { const res = check(dir); assert.equal(res.warn, 0, JSON.stringify(res.items, null, 1)); noTool(res); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Node project with package.json scripts, .nvmrc and a lockfile: clean', () => {
+  const dir = repo({ ...CI, '.nvmrc': '22.11.0\n', 'package-lock.json': '{"lockfileVersion":3}',
+    'package.json': JSON.stringify({ name: 'app', scripts: { test: 'node --test' }, dependencies: { express: '4.21.1' } }), 'src/index.js': 'export {};\n' });
+  try { const res = check(dir); assert.equal(res.warn, 0, JSON.stringify(res.items, null, 1)); noTool(res); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Node project with no runtime pin: exactly one warning, with ecosystem examples and no tool named as the fix', () => {
+  const dir = repo({ ...CI, 'package-lock.json': '{"lockfileVersion":3}',
+    'package.json': JSON.stringify({ name: 'app', scripts: { test: 'node --test' }, dependencies: { express: '4.21.1' } }), 'src/index.js': 'export {};\n' });
   try {
     const res = check(dir);
+    assert.equal(res.warn, 1, JSON.stringify(res.items, null, 1));
     assert.equal(status(res).tools, 'warn');
-    assert.match(note(res, 'tools'), new RegExp(`does not pin just, but the project has a justfile: add just = "${JUST_PIN.replace(/\./g, '\\.')}"`));
-    const r = fk(dir, ['portability', 'init']);
-    assert.match(r.stdout, new RegExp(`kept {4}\\.mise\\.toml \\(never rewritten\\); to pin just, add under \\[tools\\]: just = "${JUST_PIN.replace(/\./g, '\\.')}"`));
-    assert.equal(fs.readFileSync(path.join(dir, '.mise.toml'), 'utf8'), '[tools]\nnode = "22.11.0"\n');
+    assert.match(note(res, 'tools'), /no runtime version pinned: pin it the way this ecosystem does \(e\.g\. \.nvmrc/);
+    assert.doesNotMatch(note(res, 'tools'), /mise/i);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('init: fresh-clone CI runs just at the lock pin through mise; a .mise.toml pinning just is written only when absent', () => {
-  const tpl = fs.readFileSync(path.join(KIT, 'templates', 'project', 'ci', 'fresh-clone.yml'), 'utf8');
-  assert.deepEqual([...new Set(tpl.match(/just@[\d.]+/g))], [`just@${JUST_PIN}`], 'template pin matches compat.lock.json');
+test('no runner file but a check command recorded in .fk/config.json: the command interface passes', () => {
+  const dir = repo({ ...CI, '.python-version': '3.12.7\n', 'requirements.txt': 'httpx==0.27.2\n', 'app.py': 'print(1)\n' });
+  try {
+    const before = check(dir);
+    assert.equal(status(before).commands, 'warn');
+    assert.doesNotMatch(note(before, 'commands'), /justfile|fk portability init/);
+    fs.mkdirSync(path.join(dir, '.fk'));
+    fs.writeFileSync(path.join(dir, '.fk', 'config.json'), JSON.stringify({ check: 'python -m pytest' }));
+    assert.match(note(check(dir), 'commands'), /check command recorded: python -m pytest/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('services: Testcontainers, a devcontainer, the README or a hosted URL in .env.example each count; localhost does not', () => {
+  const { 'compose.yaml': _, ...rest } = PORTABLE;
+  const pkg = (dev) => JSON.stringify({ name: 'app', scripts: { test: 'node --test' }, dependencies: { pg: '8.13.0' }, devDependencies: dev });
+  const cases = [
+    [{ 'package.json': pkg({ '@testcontainers/postgresql': '10.13.2' }) }, /Testcontainers/],
+    [{ '.devcontainer/devcontainer.json': '{ "image": "mcr.microsoft.com/devcontainers/base:1" }', '.devcontainer/docker-compose.yml': 'services:\n  db:\n    image: postgres:17\n' }, /postgres: \.devcontainer\//],
+    [{ 'README.md': '# app\nNeeds PostgreSQL 17 running locally.\n' }, /postgres: mentioned in README\.md/],
+    [{ '.env.example': 'DATABASE_URL=postgres://app@db.example.com:5432/app\n' }, /hosted URL/],
+  ];
+  for (const [extra, want] of cases) {
+    const dir = repo({ ...rest, ...extra });
+    try { const res = check(dir); assert.equal(status(res).services, 'pass', note(res, 'services')); assert.match(note(res, 'services'), want); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  const local = repo({ ...rest, '.env.example': 'DATABASE_URL=postgres://app@localhost:5432/app\n' });
+  try { assert.equal(status(check(local)).services, 'warn'); } finally { fs.rmSync(local, { recursive: true, force: true }); }
+});
+
+test('fk portability init is gone: the kit writes no task runner, version manager or CI template', () => {
   const dir = repo({ 'README.md': '# x\n' });
   try {
-    assert.match(fk(dir, ['portability', 'init', '--dry-run']).stdout, /would create \.mise\.toml/);
-    assert.equal(fs.existsSync(path.join(dir, '.mise.toml')), false);
-    fk(dir, ['portability', 'init']);
-    const ci = fs.readFileSync(path.join(dir, '.github', 'workflows', 'fresh-clone.yml'), 'utf8');
-    assert.match(ci, new RegExp(`run: mise exec just@${JUST_PIN.replace(/\./g, '\\.')} -- just setup\\n[\\s\\S]*run: mise exec just@${JUST_PIN.replace(/\./g, '\\.')} -- just check`));
-    assert.equal(fs.readFileSync(path.join(dir, '.mise.toml'), 'utf8'), `[tools]\njust = "${JUST_PIN}"\n`);
-    fs.writeFileSync(path.join(dir, '.mise.toml'), '[tools]\njust = "1.40.0"\n');
-    fk(dir, ['portability', 'init']);
-    assert.equal(fs.readFileSync(path.join(dir, '.mise.toml'), 'utf8'), '[tools]\njust = "1.40.0"\n', 'never overwritten');
+    const r = fk(dir, ['portability', 'init']);
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /usage: fk portability check/);
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f !== '.git'), ['README.md']);
+    assert.equal(fs.existsSync(path.join(KIT, 'templates', 'project', 'justfile')), false);
+    assert.equal(fs.existsSync(path.join(KIT, 'templates', 'project', 'ci')), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('justfile template: fallback messages are quoted for PowerShell and sh; up/down without compose print one line', () => {
-  const jf = fs.readFileSync(path.join(KIT, 'templates', 'project', 'justfile'), 'utf8');
-  assert.match(jf, /"echo 'no boundary checker yet \(fk gates build\)'"/, 'parentheses would run a subexpression in PowerShell');
-  assert.match(jf, /^ {4}@\{\{ if path_exists\("compose\.yaml"\) == "true" \{ compose \+ " up -d" \} else \{ "echo 'no compose\.yaml: no services to start'" \} \}\}$/m);
-  assert.match(jf, /^ {4}@\{\{ .* "echo 'no compose\.yaml: nothing to stop'" \} \}\}$/m);
-  for (const l of jf.split('\n').filter((x) => /^\s+echo /.test(x))) assert.match(l, /^\s+echo '[^']*'$/, l);
-  assert.match(jf, /^set windows-shell := /m, 'kept: just 1.15 (the floor) has no [windows] attribute on set shell');
 });

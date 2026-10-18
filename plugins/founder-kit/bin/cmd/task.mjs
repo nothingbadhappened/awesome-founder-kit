@@ -26,6 +26,12 @@ const USAGE = 'usage: fk task new "<title>" [--risk R0|R1|R2|R3] [--from-omc <pa
 const REVIEW = /^(T-\d{3,})\.review-(\d+)\.md$/;
 const AC_LINE = /^\s*(?:[-*]\s*)?(AC-\d+)\s*:\s*(PASS|FAIL)\b\s*(?:[—–:-]+\s*)?(.*)$/i;
 const ADR_LINE = /^\s*(?:[-*]\s*)?(ADR-\d{4})\s*:\s*(OK|VIOLATION)\b\s*(?:[—–:-]+\s*)?(.*)$/i;
+// Markdown an id may be wrapped in: quote, heading, table cell, list mark or number, checkbox, bold.
+const MD = String.raw`^\s*(?:>\s*)?(?:#{1,6}\s*)?(?:\|\s*)?(?:(?:[-*+]|\d+[.)])\s*)?(?:\[[ xX]\]\s*)?(?:\*\*|__)?`;
+const BR_LINE = new RegExp(MD + String.raw`BR-0*(\d+)(?:\*\*|__)?\s*:\s*(?:\*\*|__)?(OK|VIOLATION)(?![\w-])(?:\*\*|__)?\s*(?:[—–:-]+\s*)?(.*)$`, 'i');
+// A business rule in the constraints file: a line that starts with its id (`BR-3: ...`, `- **BR-3** ...`, `| BR-3 | ...`).
+const BR_RULE = new RegExp(MD + String.raw`BR-0*(\d+)\b(.*)$`, 'i');
+const BR_OFF = /\((retired|draft)\)/i;
 const OVERRIDE_HINT = 'The founder may close it anyway by typing: fk-override task-check <reason> (then run fk task done again).';
 
 const contract = () => readJson(path.join(KIT, 'policy', 'base-contract.json'), {});
@@ -200,7 +206,7 @@ async function newTask(root, title, flags) {
   text = withContext(text, context);
   fs.mkdirSync(path.join(root, DIR), { recursive: true });
   fs.writeFileSync(path.join(root, rel(id)), text);
-  state.tasks = { ...(state.tasks || {}), [id]: { start: new Date().toISOString(), base, reopened: 0, spec: specOf(parseTask(text)) } };
+  state.tasks = { ...(state.tasks || {}), [id]: { start: new Date().toISOString(), base, reopened: 0, spec: specOf(parseTask(text)), rules: businessRules(root).active } };
   writeTasks(root, state);
   setNow(root, { 'Open task': `${id} ${fill.title}` });
   say(`fk task: created ${rel(id)} (declared ${risk}${flags.risk ? '' : ', the default; raise it if unsure'}, ${acs.length} acceptance criteria${omc ? ` from ${omc}` : ''}).`);
@@ -233,6 +239,24 @@ const OUTSIDE = (p) => p.startsWith(`${DIR}/`) || p.startsWith('.fk/') || p.star
 export { changeSet, stampOf };
 const STAMP_LINE = /^\s*Reviewed:\s*([0-9a-f]{12})\b/im;
 
+// The business rules the founder agreed at kickoff: line-leading BR-n ids in the constraints file, outside code fences.
+// { active: [ids in order], off: { id: 'retired'|'draft' }, mentioned: the file names a BR id anywhere }
+export function businessRules(root) {
+  let text = '';
+  try { text = fs.readFileSync(path.join(root, loadConfig(root).paths.constraints), 'utf8'); } catch { return { active: [], off: {}, mentioned: false }; }
+  const active = [], off = {};
+  let fence = false;
+  for (const l of text.split(/\r?\n/)) {
+    if (/^\s*(?:```|~~~)/.test(l)) { fence = !fence; continue; }
+    const m = !fence && BR_RULE.exec(l);
+    if (!m) continue;
+    const id = `BR-${Number(m[1])}`, status = BR_OFF.exec(m[2])?.[1].toLowerCase();
+    if (status) off[id] = status;
+    else if (!active.includes(id)) active.push(id);
+  }
+  return { active: active.filter((id) => !off[id]), off, mentioned: /\bBR-\d+/i.test(text) };
+}
+
 // ---- reviews and authorship ----
 export function reviews(root, id, task) {
   const log = readAuthorship(root);
@@ -245,12 +269,19 @@ export function reviews(root, id, task) {
   return names.map((n) => REVIEW.exec(n)).filter((m) => m && m[1] === id).map((m) => {
     const file = `${DIR}/${m[0]}`;
     const text = fs.readFileSync(path.join(root, file), 'utf8');
-    const acs = {}, adrs = {};
+    const acs = {}, adrs = {}, brs = {};
     for (const l of text.split(/\r?\n/)) {
       const a = AC_LINE.exec(l);
       if (a) acs[a[1].toUpperCase()] = { pass: a[2].toUpperCase() === 'PASS', evidence: a[3].trim() };
       const d = ADR_LINE.exec(l);
       if (d) adrs[d[1].toUpperCase()] = { ok: d[2].toUpperCase() === 'OK', note: d[3].trim() };
+      // Within one file a VIOLATION wins over an OK; any line naming a rule and VIOLATION counts as one.
+      const b = BR_LINE.exec(l);
+      const v = !b && /\bVIOLATION\b/.test(l) && /\bBR-0*(\d+)\b/i.exec(l);
+      if (b || v) {
+        const id = `BR-${Number((b || v)[1])}`, ok = !!b && b[2].toUpperCase() === 'OK';
+        if (!brs[id] || brs[id].ok) brs[id] = { ok, note: (b ? b[3] : l).trim() };
+      }
     }
     const verdict = (/^\s*Verdict:\s*(ACCEPT|REVISE)\b/im.exec(text)?.[1] || '').toUpperCase() || null;
     const round = Number(/^\s*Round:\s*(\d+)/im.exec(text)?.[1] || 1);
@@ -264,7 +295,7 @@ export function reviews(root, id, task) {
       if (bad) invalid = `written by ${agentName(bad.agent_type) || 'the main session'}, not a reviewer agent`;
       else if (impl) invalid = `written by ${agentName(impl.agent_type)} ${impl.agent_id}, which also wrote code for this task before the review`;
     }
-    return { file, n: Number(m[2]), round, acs, adrs, verdict, reviewer: agentName(last?.agent_type), invalid, stamp: STAMP_LINE.exec(text)?.[1] || null, written: last ? Date.parse(last.ts) : null };
+    return { file, n: Number(m[2]), round, acs, adrs, brs, verdict, reviewer: agentName(last?.agent_type), invalid, stamp: STAMP_LINE.exec(text)?.[1] || null, written: last ? Date.parse(last.ts) : null };
   }).sort((a, b) => a.round - b.round || a.n - b.n);
 }
 
@@ -345,6 +376,18 @@ export function evaluate(root, id, { runGates = false } = {}) {
       if (!line) missing.push(`${a}: no "${a}: OK|VIOLATION — <note>" line in ${accepted.file} (the task's Context cites it)`);
       else if (!line.ok) missing.push(`${a}: VIOLATION in ${accepted.file} (${line.note || 'no note'})`);
     }
+  }
+  // Business rules (BR-n in the constraints file), from R1: the latest review that answers a rule decides it, so a
+  // VIOLATION stands until a later review says OK; from R2 every rule needs an answer. A rule active when the task
+  // started may not be removed or retired during it without the founder.
+  const rules = businessRules(root), cfile = loadConfig(root).paths.constraints;
+  if (rules.mentioned && !rules.active.length && !Object.keys(rules.off).length) notes.push(`${cfile} mentions BR ids, but no line starts with one, so no business rule is checked`);
+  for (const d of Object.keys(rules.off).filter((b) => rules.off[b] === 'draft')) notes.push(`${d} is a draft: not checked until the founder confirms it`);
+  for (const b of task.rules || []) if (!rules.active.includes(b)) missing.push(`${b} was ${rules.off[b] || 'removed'} in ${cfile} after the task started (restore it, or the founder types: fk-override task-check <reason>)`);
+  for (const b of rules.active) {
+    const said = valid.filter((r) => r.brs[b]).at(-1);
+    if (said && !said.brs[b].ok) missing.push(`${b}: VIOLATION in ${said.file} (${said.brs[b].note || 'no note'})`);
+    else if (!said && perAc) missing.push(`${b}: no "${b}: OK|VIOLATION — <note>" line from an independent reviewer (a business rule in ${cfile})`);
   }
   const need = effective === 'R1' ? [] : ['code-reviewer', 'security-reviewer', ...(effective === 'R3' ? ['critic'] : [])];
   if (!valid.length) missing.push('no review by an independent reviewer agent');

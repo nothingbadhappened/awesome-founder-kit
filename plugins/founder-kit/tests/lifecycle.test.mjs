@@ -155,7 +155,7 @@ test('A: install.sh --yes (every tool faked, Linux with apt): each step has a co
     // Every command a step can run resolves to a fake in the sandbox (nothing real is downloaded or installed).
     const which = spawnSync(rawBash, ['-c', 'for c in curl wget sudo apt-get git git-lfs claude uv mise codebase-memory-mcp mempalace; do command -v "$c" || echo "MISSING $c"; done'], { env: b.env, encoding: 'utf8' });
     for (const l of which.stdout.trim().split('\n')) assert.ok(!/MISSING/.test(l) && l.includes(`${path.basename(b.root)}/bin/`), `not a fake: ${l}`);
-    const r = shRun(b, ['--yes']);
+    const r = shRun(b, ['--yes', '--all']);
     assert.ok(fs.existsSync(b.ledger), r.stdout + r.stderr);
     const rows = ledgerOf(b.ledger);
     const steps = rows.filter((e) => e.kind !== 'pre-existing');

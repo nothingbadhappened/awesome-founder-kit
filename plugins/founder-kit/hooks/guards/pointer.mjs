@@ -10,17 +10,18 @@ const REVIEWERS = /code-reviewer|security-reviewer|critic|verifier/i;
 
 export function pointer(config, agentType = '') {
   const { adr, constraints, standards } = config.paths;
-  const check = config.check || `${config.runner} check`;
+  const check = config.check; // the gate fk task check runs; a runner alone is not one (baseline.mjs configuredGates)
+  const gates = check ?`Gates: \`${check}\` must be green.` : 'No check command agreed yet: find the one the project uses, or ask the founder; never assume one.';
   const practice = config.stack && fs.existsSync(path.join(SKILLS, `fk-practice-${config.stack}`)) ?`; stack rules in fk-practice-${config.stack}` : '';
   const role = String(agentType).split(':').pop();
   if (PLANNERS.test(role)) {
-    return `fk: Agreed decisions are ADRs in ${adr} (latest wins); constraints in ${constraints}. A new decision needs a new ADR; contradicting an accepted one needs a superseding ADR.`;
+    return `fk: Agreed decisions are ADRs in ${adr} (latest wins); business rules (BR-n) in ${constraints}. A new decision needs a new ADR; contradicting an accepted one needs a superseding ADR.`;
   }
   if (REVIEWERS.test(role)) {
-    return `fk: Also check conformance with ${adr} and ${standards} (load fk-conformance). Gates: \`${check}\` must be green.`;
+    return `fk: Answer every business rule (BR-n) in ${constraints}; check conformance with ${adr} and ${standards} (load fk-conformance). ${gates}`;
   }
   if (BUILDERS.test(role)) {
-    return `fk: Follow ${standards}/*${practice}. Gates: \`${check}\` must be green. Do not weaken gate configs (guarded).`;
+    return `fk: Keep every business rule (BR-n) in ${constraints}; follow ${standards}/*${practice}. ${gates} Do not weaken gate configs (guarded).`;
   }
-  return `fk: Agreements: ADRs in ${adr}, constraints in ${constraints}, standards in ${standards}/*${practice}. Gates: \`${check}\`. Reviewers load fk-conformance.`;
+  return `fk: Agreements: business rules (BR-n) in ${constraints}, ADRs in ${adr}, standards in ${standards}/*${practice}. ${gates} Reviewers load fk-conformance.`;
 }

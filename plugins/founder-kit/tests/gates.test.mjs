@@ -45,6 +45,30 @@ test('gate rule: only a strict extension of the old command passes; softeners ne
   assert.ok(softening('a && b', 'b && a'), 'steps reordered');
 });
 
+test('legacy runner: the "npm run" fk init wrote before v1 counts as unset until fk config set chose it; migration 2 drops it', async () => {
+  const { refreshSnapshot, readSnapshot, hashFile, stateDir } = await import('../hooks/lib.mjs');
+  const { migrateDir } = await import('../bin/cmd/update/migrations.mjs');
+  const legacy = () => {
+    const dir = project();
+    fs.writeFileSync(path.join(dir, '.fk', 'config.json'), JSON.stringify({ runner: 'npm run', check: null, stack: null, fast_gates: null }, null, 2) + '\n');
+    refreshSnapshot(dir, ['.fk/config.json']);
+    fs.writeFileSync(path.join(stateDir(dir), 'state.json'), JSON.stringify({ state_version: 1, root: dir })); // a pre-v1 project
+    return dir;
+  };
+  const a = legacy(), b = legacy(), c = legacy();
+  try {
+    let r = fk(a, 'config', 'set', 'runner', 'cargo');
+    assert.equal(r.status, 0, r.stdout);
+    assert.equal(cfg(a).runner, 'cargo', 'a first set, not a refused change');
+    assert.equal(fk(b, 'config', 'set', 'runner', 'npm run').status, 0, 'chosen explicitly');
+    assert.equal(fk(b, 'config', 'set', 'runner', 'cargo').status, 1, 'now a real gate');
+    for (const d of [b, c]) migrateDir(stateDir(d), d);
+    assert.equal(cfg(b).runner, 'npm run', 'an explicitly set runner stays');
+    assert.equal(cfg(c).runner, null, 'the legacy default is dropped');
+    assert.equal(readSnapshot(c).files['.fk/config.json'], hashFile(c, '.fk/config.json'), 'the guards still trust it');
+  } finally { for (const d of [a, b, c]) fs.rmSync(d, { recursive: true, force: true }); }
+});
+
 test('fk config set: gate commands only grow without the founder; fk-approve gates allows exactly one command once; fk audit lists changes and flags direct edits', () => {
   const dir = project();
   try {

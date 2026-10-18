@@ -1,5 +1,5 @@
 # {{Project}} impact map: changing X ⇒ consider Y (couplings code analysis can't see).
-# `{{runner}} impact` lists triggered rules; `check` fails unless each companion is changed
+# The impact check lists triggered rules; the check command fails unless each companion is changed
 # or acknowledged in the task file. Add rules via a separate reviewed task; each needs a `why`.
 rules:
   - {id: user-linked-data, when: ["{{schema_glob}}", "{{migrations_glob}}"],
@@ -23,7 +23,7 @@ rules:
   - {id: user-facing-copy, when: ["{{i18n_glob}}"],
      consider: [voice rules, all locales, store listing copy],
      why: trust and platform policies depend on wording}
-  - {id: config-and-env, when: [".env.example", "{{config_glob}}", "compose.yaml", "{{runner_file}}", "infra/**"],
+  - {id: config-and-env, when: [".env.example", "{{config_glob}}", "{{services_file}}", "{{commands_file}}", "infra/**"],
      consider: [env ↔ schema sync, tooling map ↔ portability.md, CI, offline proof, idle cost],
      why: local and remote differ only by config}
   - {id: process-and-skills, when: [".claude/skills/**", "CLAUDE.md", "docs/standards/**", "docs/adr/**"],

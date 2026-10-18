@@ -14,6 +14,7 @@ const LOCK = JSON.parse(fs.readFileSync(path.join(KIT, 'compat.lock.json'), 'utf
 const WIN = process.platform === 'win32';
 const NATIVE_CONTAINERS = !WIN && process.platform !== 'darwin'; // Linux: Podman runs natively, no machine
 const { runSetup } = await import('../bin/cmd/setup.mjs');
+const { TOOLS } = await import('../bin/cmd/setup/core.mjs');
 const { default: baseToolsNote } = await import('../hooks/session/10-base-tools.mjs');
 
 const PRESENT = {
@@ -85,7 +86,7 @@ async function setup(sb, args, extra = {}) {
   const ran = [];
   try {
     const code = await runSetup(args, {
-      env: sb.env, out: (s = '') => lines.push(s), isTTY: false, has: () => false, underClaude: () => false /* plays the founder's terminal */, userPath: (dir) => { sb.userPath = dir; return true; },
+      env: sb.env, out: (s = '') => lines.push(s), isTTY: false, cwd: sb.root, has: () => false, underClaude: () => false /* plays the founder's terminal */, userPath: (dir) => { sb.userPath = dir; return true; },
       exec: (step) => { ran.push(step); return extra.exec ? extra.exec(step) : { ok: true }; },
       ...extra.deps,
     });
@@ -109,10 +110,75 @@ test('compat.lock.json pins every base tool and is dated', () => {
   for (const [id, t] of Object.entries(LOCK.tools)) if (t.min) assert.ok(cmpVer(t.min, t.version) <= 0, `${id}: min <= version`);
 });
 
-test('dry run with nothing installed: full plan, nothing executed or written', async () => {
+test('dry run with nothing installed: core plan only, optional tools listed as optional; nothing executed or written', async () => {
   const sb = sandbox();
   try {
     const r = await setup(sb, ['--dry-run']);
+    assert.equal(r.code, 1);
+    assert.equal(r.ran.length, 0);
+    assert.match(r.out, /Install git \(/);
+    assert.match(r.out, /Install Node\.js/);
+    assert.match(r.out, /Install Claude Code/);
+    assert.match(r.out, /Install oh-my-claudecode/);
+    assert.match(r.out, /Install gitleaks/, 'gitleaks is core: the secret guard needs it');
+    assert.doesNotMatch(r.out, /Install (?:Git LFS|uv|mise|just|GitHub CLI|Containers|Compose|codebase-memory|MemPalace|SkillSpector)\b|mempalace init|config set auto_index/);
+    assert.match(r.out, /optional\s+MemPalace\s+optional; proposed per project when it needs it/);
+    assert.match(r.out, /fk setup --with <id>/);
+    assert.equal(fs.existsSync(sb.fk), false, 'dry run writes nothing');
+  } finally { sb.cleanup(); }
+});
+
+test('only the core tools present: no optional install steps, exit 0, no session note; --with mise adds mise; bad ids are refused', async () => {
+  const sb = sandbox({ tools: { git: PRESENT.git, node: PRESENT.node, claude: PRESENT.claude, gitleaks: PRESENT.gitleaks }, plugins: [READY.plugins[0]], marketplaces: [READY.marketplaces[0]] });
+  try {
+    const r = await setup(sb, []);
+    assert.equal(r.code, 0, r.out);
+    assert.equal(r.ran.length, 0);
+    assert.match(r.out, /All base tools are ready/);
+    const st = readStatus(sb);
+    for (const id of ['git', 'node', 'claude-code', 'oh-my-claudecode', 'gitleaks']) assert.equal(st.tools[id].level, 'green', id);
+    for (const id of ['git-lfs', 'uv', 'mise', 'just', 'gh', 'podman', 'podman-compose', 'codebase-memory-mcp', 'mempalace', 'skillspector']) {
+      assert.equal(st.tools[id].level, 'optional', id);
+      assert.equal(st.tools[id].founder, undefined, `${id}: no founder step for a tool nobody asked for`);
+    }
+    assert.equal(withHome(sb.home, baseToolsNote), undefined, 'optional tools never trigger the session note');
+    const m = await setup(sb, ['--dry-run', '--with', 'mise'], { deps: { os: 'linux', has: () => false } });
+    assert.equal(m.code, 1);
+    assert.deepEqual(steps(m.out), [`curl -fsSL https://mise.run | MISE_VERSION=v${T.mise.version} sh`]);
+    const mp = await setup(sb, ['--dry-run', '--with', 'mempalace'], { deps: { os: 'linux' } });
+    assert.match(mp.out, /Install uv[\s\S]*Install MemPalace/, 'MemPalace brings uv, which it installs with');
+    // apt's gh is below the floor and just has no route without mise: on Linux both bring mise; Windows uses winget.
+    const mise = `curl -fsSL https://mise.run | MISE_VERSION=v${T.mise.version} sh`;
+    for (const [id, tail] of [['just', `mise use -g just@${T.just.version}`], ['gh', `mise use -g gh@${T.gh.version}`]]) {
+      const l = await setup(sb, ['--dry-run', '--with', id], { deps: { os: 'linux', has: (b) => b === 'apt-get' } });
+      assert.deepEqual(steps(l.out), [mise, tail], `linux --with ${id}`);
+      const w = await setup(sb, ['--dry-run', '--with', id], { deps: { os: 'win', has: () => false } });
+      assert.doesNotMatch(w.out, /Install mise/, `win --with ${id}: winget, no mise`);
+    }
+    assert.equal((await setup(sb, ['--with', 'nope'])).code, 2);
+    assert.equal((await setup(sb, ['--with'])).code, 2);
+  } finally { sb.cleanup(); }
+});
+
+test('optional tools approved in the project\'s .fk/toolchain.json are planned', async () => {
+  const sb = sandbox({ tools: { git: PRESENT.git, node: PRESENT.node, claude: PRESENT.claude }, plugins: [READY.plugins[0]], marketplaces: [READY.marketplaces[0]] });
+  const proj = path.join(sb.root, 'proj');
+  try {
+    fs.mkdirSync(path.join(proj, '.fk'), { recursive: true });
+    fs.writeFileSync(path.join(proj, '.fk', 'toolchain.json'), JSON.stringify({ approved: ['eslint@9.12.0', 'just@1.58.0', 'brew:gitleaks'] }));
+    const { refreshSnapshot } = await import('../hooks/lib.mjs');
+    withHome(sb.home, () => refreshSnapshot(proj, ['.fk/toolchain.json'])); // as the fk CLI does
+    const r = await setup(sb, ['--dry-run'], { deps: { os: 'win', cwd: proj } });
+    assert.match(r.out, /Install just/);
+    assert.match(r.out, /Install gitleaks/);
+    assert.doesNotMatch(r.out, /Install (?:mise|uv|MemPalace)\b/);
+  } finally { sb.cleanup(); }
+});
+
+test('--all: the full plan, nothing executed or written', async () => {
+  const sb = sandbox();
+  try {
+    const r = await setup(sb, ['--dry-run', '--all']);
     assert.equal(r.code, 1);
     assert.equal(r.ran.length, 0);
     assert.match(r.out, /Install git/);
@@ -126,7 +192,7 @@ test('dry run with nothing installed: full plan, nothing executed or written', a
     assert.match(r.out, /config set auto_index false/);
     assert.match(r.out, /mempalace init --yes --no-llm --backend sqlite_exact/);
     assert.match(r.out, /Dry run: nothing was changed/);
-    assert.match(r.out, /Install GitHub CLI \(/, 'gh is a base tool now');
+    assert.match(r.out, /Install GitHub CLI \(/);
     assert.doesNotMatch(r.out, /optional/);
     assert.equal(fs.existsSync(sb.fk), false, 'dry run writes nothing');
   } finally { sb.cleanup(); }
@@ -158,7 +224,7 @@ test('everything present and configured: all ready, exit 0, status cached', asyn
 test('no consent without --yes when nobody can answer: nothing runs, status says red', async () => {
   const sb = sandbox({ ...READY, tools: without('gitleaks') });
   try {
-    const r = await setup(sb, []);
+    const r = await setup(sb, ['--all', '--all']);
     assert.equal(r.code, 1);
     assert.equal(r.ran.length, 0);
     assert.match(r.out, /Install gitleaks/);
@@ -171,7 +237,7 @@ test('no consent without --yes when nobody can answer: nothing runs, status says
 test('a "no" at the prompt installs nothing', async () => {
   const sb = sandbox({ ...READY, tools: without('gitleaks') });
   try {
-    const r = await setup(sb, [], { deps: { isTTY: true, ask: async () => false } });
+    const r = await setup(sb, ['--all', '--all'], { deps: { isTTY: true, ask: async () => false } });
     assert.equal(r.code, 1);
     assert.equal(r.ran.length, 0);
   } finally { sb.cleanup(); }
@@ -182,7 +248,7 @@ test('--yes installs, verifies, writes the ledger; a second run is a no-op', asy
   // The recording exec "installs" by dropping the fake binary in place.
   const exec = (step) => { fakeBin(sb.bin, BIN_OF[step.tool] || step.tool, PRESENT[BIN_OF[step.tool] || step.tool]); return { ok: true }; };
   try {
-    const r = await setup(sb, ['--yes'], { exec });
+    const r = await setup(sb, ['--all', '--yes'], { exec });
     assert.equal(r.code, 0, r.out);
     assert.deepEqual(r.ran.map((s) => s.tool).sort(), ['gitleaks', 'skillspector']);
     const ledger = readLedger(sb);
@@ -199,7 +265,7 @@ test('--yes installs, verifies, writes the ledger; a second run is a no-op', asy
     assert.equal(ledger.find((e) => e.tool === 'gitleaks').version, LOCK.tools.gitleaks.version);
     assert.equal(readStatus(sb).tools.gitleaks.level, 'green');
 
-    const again = await setup(sb, ['--yes'], { exec });
+    const again = await setup(sb, ['--all', '--yes'], { exec });
     assert.equal(again.code, 0);
     assert.equal(again.ran.length, 0, 'idempotent');
     assert.equal(readLedger(sb).length, 2);
@@ -209,7 +275,7 @@ test('--yes installs, verifies, writes the ledger; a second run is a no-op', asy
 test('a failed step is logged as failed and the run stays red', async () => {
   const sb = sandbox({ ...READY, tools: without('gitleaks') });
   try {
-    const r = await setup(sb, ['--yes'], { exec: () => ({ ok: false }) });
+    const r = await setup(sb, ['--all', '--yes'], { exec: () => ({ ok: false }) });
     assert.equal(r.code, 1);
     assert.equal(readLedger(sb)[0].ok, false);
     assert.match(r.out, /Still red|still red/i);
@@ -301,7 +367,7 @@ test('C3: fk setup writes the user-level fk shim (resolved at run time); --remov
 test('settings: CBM auto_index on is planned off; an existing palace and the user\'s silent_save choice are kept', async () => {
   const sb = sandbox({ ...READY, cbmConfig: 'true', mpConfig: { backend: 'chroma', hooks: { silent_save: false } } });
   try {
-    const r = await setup(sb, ['--dry-run']);
+    const r = await setup(sb, ['--all', '--dry-run']);
     assert.match(r.out, /codebase-memory-mcp config set auto_index false/);
     assert.match(r.out, /codebase-memory-mcp config set auto_watch false/);
     assert.match(r.out, /uses the chroma backend; kept as is/);
@@ -316,13 +382,13 @@ test('a palace set up by mempalace init (config written, folder not yet created)
   try {
     const mp = path.join(sb.home, '.config', 'mempalace');
     fs.writeFileSync(path.join(mp, 'config.json'), JSON.stringify({ palace_path: path.join(mp, 'palace'), backend: 'sqlite_exact', hooks: { silent_save: true } }));
-    const r = await setup(sb, []);
+    const r = await setup(sb, ['--all', '--all']);
     assert.equal(r.code, 0, r.out);
     assert.doesNotMatch(r.out, /mempalace init|no palace yet/);
     assert.ok(readAll(sb).some((e) => e.item === 'mempalace:palace' && e.kind === 'pre-existing'));
     // Without the backend line (only the silent_save step wrote config.json) there is no palace yet.
     fs.writeFileSync(path.join(mp, 'config.json'), JSON.stringify({ hooks: { silent_save: true } }));
-    assert.match((await setup(sb, ['--dry-run'])).out, /mempalace init --yes/);
+    assert.match((await setup(sb, ['--all', '--dry-run'])).out, /mempalace init --yes/);
   } finally { sb.cleanup(); }
 });
 
@@ -342,7 +408,7 @@ const steps = (out) => out.split('\n').filter((l) => /^\s+> /.test(l)).map((l) =
 test('nothing installed, Windows with WSL2: winget pins, Podman machine and compose planned; nothing runs or is written', async () => {
   const sb = sandbox({ tools: { wsl: PRESENT.wsl } });
   try {
-    const r = await setup(sb, ['--dry-run'], { deps: { os: 'win' } });
+    const r = await setup(sb, ['--all', '--dry-run'], { deps: { os: 'win' } });
     assert.equal(r.ran.length, 0);
     for (const re of [`GitHub.GitLFS .*--version ${T['git-lfs'].version}`, '^git lfs install$', `jdx\\.mise .*--version ${T.mise.version}`,
       `^mise use -g just@${T.just.version}$`, 'winget install --id GitHub\\.cli ', `RedHat\\.Podman .*--version ${T.podman.version}`,
@@ -362,11 +428,11 @@ test('Windows without WSL2: Podman installs, its machine waits; WSL2 is a founde
   const sb = sandbox();
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-setup-proj-'));
   try {
-    const dry = await setup(sb, ['--dry-run'], { deps: { os: 'win' } });
+    const dry = await setup(sb, ['--all', '--dry-run'], { deps: { os: 'win' } });
     assert.match(dry.out, /RedHat\.Podman/);
     assert.doesNotMatch(dry.out, /podman machine init/);
     assert.match(dry.out, /Only you can do these[\s\S]*`wsl --install --no-distribution`[\s\S]*restart the computer/);
-    const r = await setup(sb, ['--yes'], { deps: { os: 'win' } });
+    const r = await setup(sb, ['--all', '--yes'], { deps: { os: 'win' } });
     assert.ok(r.ran.every((s) => !/\bwsl\b/.test(s.cmd)), 'WSL is never installed silently');
     for (const id of ['git-lfs', 'mise', 'just', 'gh', 'podman', 'podman-compose', 'gitleaks', 'mempalace']) assert.ok(r.ran.some((s) => s.tool === id), `${id} still installs`);
     const st = readStatus(sb);
@@ -390,7 +456,7 @@ test('Windows without WSL2: Podman installs, its machine waits; WSL2 is a founde
 test('nothing installed, macOS with Homebrew: brew installs and the Podman machine', async () => {
   const sb = sandbox();
   try {
-    const r = await setup(sb, ['--dry-run'], { deps: { os: 'mac', has: (b) => b === 'brew' } });
+    const r = await setup(sb, ['--all', '--dry-run'], { deps: { os: 'mac', has: (b) => b === 'brew' } });
     for (const p of ['git-lfs', 'mise', 'gh', 'podman']) assert.ok(steps(r.out).includes(`brew install ${p}`), p);
     assert.ok(steps(r.out).includes(`mise use -g just@${T.just.version}`), 'just through the mise brew installs');
     assert.ok(!steps(r.out).includes('brew install just'), 'never also through brew');
@@ -402,7 +468,7 @@ test('nothing installed, macOS with Homebrew: brew installs and the Podman machi
 test('nothing installed, Linux with apt: distro packages, mise pinned via its script, no machine', async () => {
   const sb = sandbox();
   try {
-    const r = await setup(sb, ['--dry-run'], { deps: { os: 'linux', has: (b) => b === 'apt-get' } });
+    const r = await setup(sb, ['--all', '--dry-run'], { deps: { os: 'linux', has: (b) => b === 'apt-get' } });
     for (const p of ['git-lfs', 'podman']) assert.ok(steps(r.out).includes(`sudo apt-get update && sudo apt-get install -y ${p}`), p);
     for (const p of ['just', 'gh']) assert.ok(steps(r.out).includes(`mise use -g ${p}@${T[p].version}`), `${p} pinned through mise, never apt`);
     assert.ok(steps(r.out).includes(`curl -fsSL https://mise.run | MISE_VERSION=v${T.mise.version} sh`));
@@ -428,10 +494,14 @@ test('Docker already there: kept, Podman and podman-compose never added next to 
 test('Podman present without a machine: only init + start planned; --yes logs them with rollback hints; next run is a no-op', async () => {
   const sb = sandbox({ ...READY, answers: { podman: NO_MACHINE } });
   try {
-    const dry = await setup(sb, ['--dry-run'], { deps: { os: 'mac' } });
+    const unasked = await setup(sb, ['--dry-run'], { deps: { os: 'mac' } });
+    assert.equal(unasked.code, 0, 'an optional tool nobody asked for is not set up further');
+    assert.deepEqual(steps(unasked.out), []);
+    assert.match(unasked.out, /yellow\s+Containers \(Podman\)\s+5\.8\.3, no Podman machine yet.*fk setup --with podman sets it up/);
+    const dry = await setup(sb, ['--all', '--dry-run'], { deps: { os: 'mac' } });
     assert.deepEqual(steps(dry.out), [`podman machine init --cpus ${T.podman.machine.cpus} --memory ${T.podman.machine.memory_mib}`, 'podman machine start']);
     const exec = () => { fakeBin(sb.bin, 'podman', PRESENT.podman, 'false', MACHINE_ON); return { ok: true }; };
-    const r = await setup(sb, ['--yes'], { deps: { os: 'mac' }, exec });
+    const r = await setup(sb, ['--all', '--yes'], { deps: { os: 'mac' }, exec });
     assert.equal(r.code, 0, r.out);
     const ledger = readLedger(sb);
     assert.deepEqual(ledger.map((e) => [e.tool, e.action, e.version]), [['podman', 'configure', T.podman.version], ['podman', 'configure', T.podman.version]]);
@@ -441,7 +511,7 @@ test('Podman present without a machine: only init + start planned; --yes logs th
     assert.equal(ledger[1].kind, 'runtime', 'starting the machine is nothing to undo');
     assert.ok(readAll(sb).some((e) => e.item === 'podman' && e.kind === 'pre-existing'), 'Podman itself was already there');
     assert.deepEqual(readStatus(sb).tools.podman.machine, { exists: true, running: true });
-    const again = await setup(sb, ['--yes'], { deps: { os: 'mac' }, exec });
+    const again = await setup(sb, ['--all', '--yes'], { deps: { os: 'mac' }, exec });
     assert.equal(again.ran.length, 0, 'idempotent');
   } finally { sb.cleanup(); }
 });
@@ -449,20 +519,20 @@ test('Podman present without a machine: only init + start planned; --yes logs th
 test('all present: machine status cached, Git LFS switched on, just through mise counts; LFS off is planned on', async () => {
   const sb = sandbox(READY);
   try {
-    const r = await setup(sb, [], { deps: { os: 'mac' } });
+    const r = await setup(sb, ['--all', '--all'], { deps: { os: 'mac' } });
     assert.equal(r.code, 0, r.out);
     assert.equal(r.ran.length, 0);
     assert.deepEqual(readStatus(sb).tools.podman.machine, { exists: true, running: false });
   } finally { sb.cleanup(); }
   const off = sandbox({ ...READY, tools: without('just'), answers: { git: NO_LFS, mise: { 'exec -- just': 'just 1.58.0' } } });
   try {
-    const r = await setup(off, ['--dry-run'], { deps: { os: 'linux' } });
+    const r = await setup(off, ['--all', '--dry-run'], { deps: { os: 'linux' } });
     assert.deepEqual(steps(r.out), ['git lfs install']);
     assert.match(r.out, /just\s+1\.58\.0, through mise/);
   } finally { off.cleanup(); }
   const viaMise = sandbox({ ...READY, tools: without('just'), answers: { mise: { exec: null } } });
   try {
-    const r = await setup(viaMise, ['--dry-run'], { deps: { os: 'win', has: (b) => b === 'mise' } });
+    const r = await setup(viaMise, ['--all', '--dry-run'], { deps: { os: 'win', has: (b) => b === 'mise' } });
     assert.deepEqual(steps(r.out), [`mise use -g just@${T.just.version}`]);
   } finally { viaMise.cleanup(); }
 });
@@ -530,28 +600,42 @@ test('install scripts carry every locked tool at its pinned version, and nothing
       assert.match(src, /chmod go-w ~\/\.local\/bin && curl -fsSL \$CBM_RAW\/install\.sh/, 'install.sh: ~/.local/bin not group-writable before CBM');
     }
     assert.match(src, /bin.fk\.mjs['"]?\)? setup --shim/, `${name}: writes the user-level fk shim through the kit`);
+    const optional = TOOLS.filter((t) => !t.core).map((t) => t.id);
+    assert.ok(src.includes(name === 'install.ps1' ? `@(${optional.map((id) => `'${id}'`).join(', ')})` : `OPTIONAL="${optional.join(' ')}"`), `${name}: optional tools = TOOLS without core`);
     assert.doesNotMatch(src, /npm-only/, `${name}: an npm OMC is never doubled with the plugin copy`);
     assert.doesNotMatch(src, /[A-Z]:\\Users\\|\/home\/[a-z]|\/Users\/[a-z]/i, `${name}: no personal paths`);
   }
 });
 
 const gitBash = WIN ? ['C:\\Program Files\\Git\\bin\\bash.exe'].find((p) => fs.existsSync(p)) : 'bash';
-test('install.sh --dry-run: plans from fake tools, writes nothing', { skip: !gitBash && 'bash not found' }, () => {
+test('install.sh --dry-run: plans from fake tools (optional ones only when asked for), writes nothing', { skip: !gitBash && 'bash not found' }, () => {
   const sb = sandbox({ plugins: READY.plugins, marketplaces: READY.marketplaces, palace: true, mpConfig: READY.mpConfig });
   try {
-    for (const [name, text] of Object.entries(without('gitleaks'))) {
+    for (const [name, text] of Object.entries(without('gitleaks', 'mise', 'just'))) {
       const cfg = name === 'codebase-memory-mcp' ? '[ "$1" = config ] && { echo false; exit 0; }\n' : '';
       fs.writeFileSync(path.join(sb.bin, name), `#!/bin/sh\n${cfg}echo "${text}"\n`, { mode: 0o755 });
     }
     const utils = WIN ? 'C:\\Program Files\\Git\\usr\\bin' : '/usr/bin:/bin';
     const env = { ...sb.env, PATH: `${sb.bin}${path.delimiter}${utils}` };
-    const r = spawnSync(gitBash, [path.join(REPO, 'install', 'install.sh'), '--dry-run'], { env, encoding: 'utf8', timeout: 60000 });
+    const sh = (...a) => spawnSync(gitBash, [path.join(REPO, 'install', 'install.sh'), '--dry-run', ...a], { env, encoding: 'utf8', timeout: 60000 });
+    const core = sh();
+    assert.equal(core.status, 0, core.stdout + core.stderr);
+    assert.match(core.stdout, /Install gitleaks/, 'gitleaks is core');
+    assert.ok(core.stdout.includes(`V=${LOCK.tools.gitleaks.version}`), 'pinned gitleaks release');
+    assert.match(core.stdout, /optional\s+mise\s+optional; proposed per project when it needs it/);
+    assert.doesNotMatch(core.stdout, /Install (?:mise|just)\b/);
+    assert.match(core.stdout, /fk setup --with <id> \([^)]*\bjust\b/);
+    assert.equal(sh('--with', 'nope').status, 2);
+    // FK_WITH, not argv: Git Bash expands a * in the arguments a Windows process passes it.
+    const glob = spawnSync(gitBash, [path.join(REPO, 'install', 'install.sh'), '--dry-run'], { env: { ...env, FK_WITH: '*' }, encoding: 'utf8', timeout: 60000 });
+    assert.equal(glob.status, 2);
+    assert.match(glob.stdout, /unknown optional tool: \* /, 'the id is never globbed');
+    const r = sh('--with', 'just');
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /Dry run: nothing was changed/);
     assert.match(r.stdout, /claude plugin marketplace add nothingbadhappened\/awesome-founder-kit/);
     assert.match(r.stdout, /claude plugin install founder-kit@awesome-founder-kit/);
-    assert.match(r.stdout, /Install gitleaks/);
-    assert.ok(r.stdout.includes(`V=${LOCK.tools.gitleaks.version}`), 'pinned gitleaks release');
+    assert.match(r.stdout, /Install mise[\s\S]*mise use -g just@/, 'just brings mise, which it installs with');
     assert.equal(fs.existsSync(sb.fk), false, 'dry run writes nothing');
   } finally { sb.cleanup(); }
 });
@@ -564,7 +648,7 @@ test('install.sh --dry-run: a palace set up by mempalace init (no folder yet) is
       fs.writeFileSync(path.join(sb.bin, name), `#!/bin/sh\n${cfg}echo "${text}"\n`, { mode: 0o755 });
     }
     const utils = WIN ? 'C:\\Program Files\\Git\\usr\\bin' : '/usr/bin:/bin';
-    const r = spawnSync(gitBash, [path.join(REPO, 'install', 'install.sh'), '--dry-run'], { env: { ...sb.env, PATH: `${sb.bin}${path.delimiter}${utils}` }, encoding: 'utf8', timeout: 60000 });
+    const r = spawnSync(gitBash, [path.join(REPO, 'install', 'install.sh'), '--dry-run', '--all'], { env: { ...sb.env, PATH: `${sb.bin}${path.delimiter}${utils}` }, encoding: 'utf8', timeout: 60000 });
     assert.ok(r.status === 0 || r.status === 1, r.stdout + r.stderr);
     assert.doesNotMatch(r.stdout, /mempalace init|no palace yet/);
   } finally { sb.cleanup(); }
@@ -575,6 +659,14 @@ test('install.ps1 parses under Windows PowerShell', { skip: !WIN && 'Windows onl
   const r = spawnSync('powershell', ['-NoProfile', '-Command',
     `$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${file}', [ref]$null, [ref]$e); if ($e) { $e | ForEach-Object { $_.Message }; exit 1 }`], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
+  // -With gh,nope arrives as an array (each element split on commas and spaces, like FK_WITH); an unknown id exits 2.
+  const env = { ...process.env, CLAUDE_CODE_CHILD_SESSION: '', FK_WITH: '' };
+  const bad = spawnSync('powershell', ['-NoProfile', '-Command', `& '${file}' -DryRun -With gh,nope; exit $LASTEXITCODE`], { encoding: 'utf8', env });
+  assert.equal(bad.status, 2, bad.stdout + bad.stderr);
+  assert.match(bad.stdout, /unknown optional tool: nope \(/);
+  const viaEnv = spawnSync('powershell', ['-NoProfile', '-File', file, '-DryRun'], { encoding: 'utf8', env: { ...env, FK_WITH: 'mise just,nope' } });
+  assert.equal(viaEnv.status, 2, viaEnv.stdout + viaEnv.stderr);
+  assert.match(viaEnv.stdout, /unknown optional tool: nope \(/);
 });
 
 // ---- v0.7 review: just after mise (M3), apt floors (M4), founder steps and the note throttle ----
@@ -583,14 +675,14 @@ test('M3: macOS without Homebrew, Windows and Linux from scratch: mise first, th
     ['linux', (b) => b === 'apt-get', /^curl -fsSL https:\/\/mise\.run \| MISE_VERSION=/]]) {
     const sb = sandbox({ ...READY, tools: without('mise', 'just') });
     try {
-      const dry = await setup(sb, ['--dry-run'], { deps: { os: o, has } });
+      const dry = await setup(sb, ['--all', '--dry-run'], { deps: { os: o, has } });
       const s = steps(dry.out);
       assert.match(s[0], first, `${o}: mise is the first step`);
       assert.equal(s[1], `mise use -g just@${T.just.version}`, `${o}: then just through mise`);
       assert.ok(!s.some((x) => /Casey\.Just|install(?: -y)? just\b|pacman .*just/.test(x)), `${o}: never also through a package manager`);
       // The recording exec: installing mise brings a mise whose global config then holds just.
       const exec = (step) => { if (step.tool === 'mise') fakeBin(sb.bin, 'mise', PRESENT.mise, 'false', { 'exec -- just': PRESENT.just }); return { ok: true }; };
-      const r = await setup(sb, ['--yes'], { deps: { os: o, has }, exec });
+      const r = await setup(sb, ['--all', '--yes'], { deps: { os: o, has }, exec });
       assert.equal(r.code, 0, `${o}: ${r.out}`);
       assert.deepEqual(r.ran.map((x) => x.tool), ['mise', 'just'], o);
       assert.match(r.out, /Result[\s\S]*just\s+1\.58\.0, through mise/, o);
@@ -603,18 +695,18 @@ test('M4: Ubuntu 22.04 floors: gh 2.4.0 is replaced through mise; Podman 3.4.4 i
   const sb = sandbox({ ...READY, tools: jammy, answers: { mise: { exec: null } } }); // mise holds no gh yet
   const opts = { deps: { os: 'linux', has: (b) => b === 'apt-get' } };
   try {
-    const dry = await setup(sb, ['--dry-run'], opts);
+    const dry = await setup(sb, ['--all', '--dry-run'], opts);
     assert.deepEqual(steps(dry.out), [`mise use -g gh@${T.gh.version}`]);
     assert.match(dry.out, /yellow\s+Containers \(Podman\)\s+3\.4\.4, Your Linux ships Podman 3\.4\.4; Podman ≥4\.9 needs Ubuntu 24\.04\+\/Debian 13\+ or packages from podman\.io\./);
     assert.doesNotMatch(dry.out, /apt-get install -y (?:podman|gh)/);
     const exec = (step) => { if (step.tool === 'gh') fakeBin(sb.bin, 'mise', PRESENT.mise, 'false', { 'exec -- gh': PRESENT.gh }); return { ok: true }; };
-    const r = await setup(sb, ['--yes'], { ...opts, exec });
+    const r = await setup(sb, ['--all', '--yes'], { ...opts, exec });
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /Result[\s\S]*GitHub CLI\s+2\.102\.0, through mise/);
     const st = readStatus(sb);
     assert.deepEqual([st.tools.podman.level, st.tools.podman.founder[0].id], ['yellow', 'podman-old']);
     assert.equal(st.tools.gh.founder[0].cmd, 'mise exec -- gh auth login', 'the sign-in names the gh the kit installed');
-    const again = await setup(sb, ['--yes'], { ...opts, exec });
+    const again = await setup(sb, ['--all', '--yes'], { ...opts, exec });
     assert.equal(again.ran.length, 0, 'nothing is re-planned');
   } finally { sb.cleanup(); }
 });
@@ -622,7 +714,7 @@ test('M4: Ubuntu 22.04 floors: gh 2.4.0 is replaced through mise; Podman 3.4.4 i
 test('macOS without Homebrew: the Podman machine is not planned while Podman itself is a manual install', async () => {
   const sb = sandbox({ ...READY, tools: without('podman') });
   try {
-    const r = await setup(sb, ['--dry-run'], { deps: { os: 'mac', has: () => false } });
+    const r = await setup(sb, ['--all', '--dry-run'], { deps: { os: 'mac', has: () => false } });
     assert.ok(steps(r.out).some((s) => /^echo "Install Podman from https:\/\/podman\.io/.test(s)), r.out);
     assert.doesNotMatch(r.out, /podman machine (?:init|start)/);
   } finally { sb.cleanup(); }
@@ -631,7 +723,7 @@ test('macOS without Homebrew: the Podman machine is not planned while Podman its
 test('founder steps: blocking first (WSL2 before the gh sign-in); the session note repeats the blocking one at most once a day', async () => {
   const sb = sandbox({ ...READY, tools: without('wsl') });
   try {
-    const r = await setup(sb, ['--dry-run'], { deps: { os: 'win' } });
+    const r = await setup(sb, ['--all', '--dry-run'], { deps: { os: 'win' } });
     const only = r.out.slice(r.out.indexOf('Only you can do these'));
     assert.ok(only.indexOf('wsl --install') > 0 && only.indexOf('wsl --install') < only.indexOf('gh auth login'), r.out);
   } finally { sb.cleanup(); }
@@ -685,7 +777,7 @@ function shUtils(sb) {
 }
 // eslint-disable-next-line no-control-regex
 const shPlan = (out) => out.replace(/\x1b\[\d+m/g, '').split('\n').filter((l) => /^\s+> /.test(l)).map((l) => l.replace(/^\s+> /, ''));
-const runSh = (sb, env) => spawnSync(gitBash, [path.join(REPO, 'install', 'install.sh'), '--dry-run'], { env, cwd: sb.root, encoding: 'utf8', timeout: 60000 });
+const runSh = (sb, env) => spawnSync(gitBash, [path.join(REPO, 'install', 'install.sh'), '--dry-run', '--all'], { env, cwd: sb.root, encoding: 'utf8', timeout: 60000 });
 
 test('install.sh --dry-run, Ubuntu 22.04 mocks: gh through mise, old Podman is a note (no apt re-plan), sandboxed', { skip: !gitBash && 'bash not found' }, () => {
   const { sb, env } = shSandbox({ ...without('gh', 'podman'), gh: 'gh version 2.4.0 (2021-11-21)', podman: 'podman version 3.4.4' }, { 'apt-get': 'exit 0' });

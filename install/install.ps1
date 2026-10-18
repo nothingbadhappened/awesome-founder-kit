@@ -2,18 +2,20 @@
 #
 #   irm https://raw.githubusercontent.com/nothingbadhappened/awesome-founder-kit/main/install/install.ps1 | iex
 #
-# Saved as a file it also takes: -Yes (no question, for CI)  -DryRun (print the commands only). -WithGh is accepted and
-# changes nothing: the GitHub CLI is a base tool now. Piped through iex, use environment variables instead: $env:FK_YES='1'; $env:FK_DRY_RUN='1'.
+# Saved as a file it also takes: -Yes (no question, for CI)  -DryRun (print the commands only)  -With <id,id> / -All (also set
+# up optional tools; -WithGh = -With gh). Piped through iex, use environment variables instead: $env:FK_YES='1'; $env:FK_DRY_RUN='1'; $env:FK_WITH='gh,mise' (or 'all').
 #
 # -Uninstall [-DryRun] [-Yes] [-Keep <ids>] [-Only <ids>] [-PluginOnly]: take back what Founder Kit installed
 # (fk uninstall --system; piped: $env:FK_UNINSTALL='1'). Only the founder runs it, in a terminal.
 #
-# Checks every base tool, prints one plan, asks once, installs what is missing (user scope where the tool allows),
-# configures, verifies, then adds the founder-kit plugin. Re-running is safe: present tools are left alone,
+# Checks the core tools (git, Node.js, Claude Code, oh-my-claudecode, gitleaks) and lists the optional ones, prints one plan, asks once,
+# installs what is missing (user scope where the tool allows), configures, verifies, then adds the founder-kit plugin.
+# Optional tools are set up only when asked for (here, or later with fk setup --with <id>, usually when a project's
+# toolchain proposal names one). Re-running is safe: present tools are left alone,
 # nothing is uninstalled or downgraded. Every change is logged to ~/.fk/install-ledger.jsonl with its undo command, and
 # what was already here is logged as pre-existing (never removed by the kit).
 # Versions mirror plugins/founder-kit/compat.lock.json (a test fails when they drift).
-param([switch]$Yes, [switch]$DryRun, [switch]$WithGh, [switch]$Uninstall, [string]$Keep, [string]$Only, [switch]$PluginOnly)
+param([switch]$Yes, [switch]$DryRun, [string[]]$With, [switch]$All, [switch]$WithGh, [switch]$Uninstall, [string]$Keep, [string]$Only, [switch]$PluginOnly)
 
 function ConvertTo-Tilde([string]$Path) {
   $h = (@($env:USERPROFILE, $env:HOME, $HOME) | Where-Object { $_ } | Select-Object -First 1).TrimEnd('\', '/')
@@ -79,7 +81,7 @@ function Uninstall-FounderKit {
 }
 
 function Install-FounderKit {
-  param([switch]$Yes, [switch]$DryRun, [switch]$WithGh)
+  param([switch]$Yes, [switch]$DryRun, [string[]]$With = @())
   $ErrorActionPreference = 'Continue'
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -107,6 +109,18 @@ function Install-FounderKit {
   $Fk = @{ marketplace = 'nothingbadhappened/awesome-founder-kit'; plugin = 'founder-kit@awesome-founder-kit'; name = 'awesome-founder-kit' }
   $CbmRaw = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/v$CbmVersion"
   $CbmBase = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v$CbmVersion"
+
+  # Optional tools: listed, set up only when asked for. The core (git, node, claude-code, oh-my-claudecode, gitleaks) always is.
+  # Mirrors the core flag in plugins/founder-kit/bin/cmd/setup/core.mjs TOOLS (a test keeps them in step).
+  $Optional = @('git-lfs', 'uv', 'mise', 'just', 'gh', 'podman', 'podman-compose', 'codebase-memory-mcp', 'mempalace', 'skillspector')
+  $bad = @($With | Where-Object { $_ -notin ($Optional + 'all') })
+  if ($bad.Count) { Write-Host "install.ps1: unknown optional tool: $($bad -join ', ') (choose from: $($Optional -join ', '), or all)" -ForegroundColor Red; exit 2 }
+  # A core tool, or an optional one asked for (MemPalace, SkillSpector and compose install with uv). just and gh come
+  # through winget here, so they need no mise (core.mjs TOOLS needs: mac/linux only).
+  function Test-Want($id) {
+    if ($id -notin $Optional -or 'all' -in $With -or $id -in $With) { return $true }
+    return ($id -eq 'uv' -and @($With | Where-Object { $_ -in 'mempalace', 'skillspector', 'podman-compose' }).Count -gt 0)
+  }
 
   $FkHome = if ($env:FK_HOME) { $env:FK_HOME } else { Join-Path $HOME '.fk' }
   $Ledger = Join-Path $FkHome 'install-ledger.jsonl'
@@ -191,7 +205,7 @@ function Install-FounderKit {
     $r.version = Get-Ver 'mise'; Set-Grade $r $Min['mise'] @(@{ action = 'install'; cmd = "winget install --id jdx.mise $Winget --version $MiseVersion"; rollback = 'winget uninstall --id jdx.mise' }); $rows += $r
     # mise here, or installed by the step above in this run: just comes pinned through it (steps run in plan order).
     $hasMise = [bool]$r.version
-    $miseOk = $hasMise -or (@($r.steps).Count -gt 0)
+    $miseOk = $hasMise -or ((@($r.steps).Count -gt 0) -and (Test-Want 'mise'))
 
     $r = New-Row 'just' 'just' 'about 5 MB' 'one short command for each job (just setup, just check), the same on every computer'
     $r.version = Get-Ver 'just'
@@ -339,13 +353,24 @@ function Install-FounderKit {
     $r = New-Row 'founder-kit' 'Founder Kit plugin' 'about 2 MB' 'the founder layer itself'
     if (Test-Plugin 'founder-kit') { $r.version = 'installed' } else { $r.level = 'red'; $r.reason = 'missing'; $r.note = 'not installed'; $r.steps += (Get-PluginSteps $Fk) }
     $rows += $r
+
+    # An optional tool nobody asked for: listed, never planned. Missing is neutral; a copy that is here is not set up
+    # further. Only an installed copy below the floor stays red.
+    foreach ($x in $rows) {
+      if (Test-Want $x.id) { continue }
+      $x.founder = @()
+      if ($x.reason -eq 'missing') { $x.level = 'optional'; $x.reason = 'optional'; $x.note = 'optional; proposed per project when it needs it' }
+      elseif ($x.reason -eq 'below-floor') { continue }
+      elseif ($x.level -eq 'red') { $x.level = 'yellow'; $x.note = "$($x.note); fk setup --with $($x.id) sets it up" }
+      $x.steps = @()
+    }
     return ,$rows
   }
 
   function Show-Table($rows) {
-    $colors = @{ green = 'Green'; yellow = 'Yellow'; red = 'Red' }
+    $colors = @{ green = 'Green'; yellow = 'Yellow'; red = 'Red'; optional = 'DarkGray' }
     foreach ($r in $rows) {
-      Write-Host ('  {0,-7}' -f $r.level) -ForegroundColor $colors[$r.level] -NoNewline
+      Write-Host ('  {0,-8}' -f $r.level) -ForegroundColor $colors[$r.level] -NoNewline
       Write-Host (' {0,-22} {1}' -f $r.label, ((@($r.version, $r.note) | Where-Object { $_ }) -join ', '))
     }
   }
@@ -399,6 +424,8 @@ function Install-FounderKit {
   Update-SessionPath
   $rows = Get-State
   Show-Table $rows
+  $opt = @($rows | Where-Object { $_.level -eq 'optional' } | ForEach-Object { $_.id })
+  if ($opt.Count) { Write-Host ''; Write-Host "Optional tools stay out until a project needs one (its toolchain proposal names it). To add one now: fk setup --with <id> ($($opt -join ', '))." }
   $todo = @($rows | Where-Object { $_.steps.Count -gt 0 })
 
   if ($todo.Count -eq 0) {
@@ -466,5 +493,8 @@ function Install-FounderKit {
 if ($Uninstall -or $env:FK_UNINSTALL -eq '1') {
   Uninstall-FounderKit -Yes:($Yes -or $env:FK_YES -eq '1') -DryRun:($DryRun -or $env:FK_DRY_RUN -eq '1') -Keep $Keep -Only $Only -PluginOnly:$PluginOnly
 } else {
-  Install-FounderKit -Yes:($Yes -or $env:FK_YES -eq '1') -DryRun:($DryRun -or $env:FK_DRY_RUN -eq '1') -WithGh:($WithGh -or $env:FK_WITH_GH -eq '1')
+  # -With gh,mise arrives as an array, -File and FK_WITH as one string: split every element on commas and spaces.
+  $w = @(@($With) + @($env:FK_WITH) | Where-Object { $_ } | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ })
+  if ($All) { $w += 'all' }; if ($WithGh -or $env:FK_WITH_GH -eq '1') { $w += 'gh' }
+  Install-FounderKit -Yes:($Yes -or $env:FK_YES -eq '1') -DryRun:($DryRun -or $env:FK_DRY_RUN -eq '1') -With $w
 }

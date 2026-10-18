@@ -19,7 +19,8 @@ fs.mkdirSync(process.env.TMP, { recursive: true });
 const { stateFile, writeJson, readJson } = await import('../hooks/lib.mjs');
 const { runHook } = await import('../hooks/selftest.mjs');
 const { assess } = await import('../bin/cmd/risk.mjs');
-const { importOmc } = await import('../bin/cmd/task.mjs');
+const taskMod = await import('../bin/cmd/task.mjs');
+const { importOmc } = taskMod;
 
 const KIT = path.join(import.meta.dirname, '..');
 const FK = path.join(KIT, 'bin', 'fk.mjs');
@@ -483,4 +484,62 @@ test('SessionStart metrics note: 3+ tasks closed since the last summary, at most
   assert.equal(note({ root: dir, now: now + 60e3 }), undefined, 'once a week');
   fk(dir, 'metrics'); // a summary resets the count
   assert.equal(note({ root: dir, now: now + 8 * 24 * 36e5 }), undefined);
+});
+
+test('fk task check: business rules (BR-n in the constraints file): a VIOLATION fails at R1; from R2 each rule needs a line', () => {
+  const dir = repo({ 'docs/00-constraints.md': '# Constraints\n\n- **BR-1**: no user data leaves the EU. Check: storage region.\n- BR-2: refunds only within 14 days.\n' });
+  fk(dir, 'task', 'new', 'Refund window', '--risk', 'R1');
+  acs(dir, 'T-001', ['x is 7']);
+  put(dir, 'src/app.js', 'export const x = 7;\n');
+  const write = (body) => {
+    review(dir, 'T-001', 1, `${fk(dir, 'task', 'stamp', 'T-001').stdout.trim()}\n${body}Verdict: ACCEPT\n`);
+    author(dir, [{ agent_id: 'r1', agent_type: 'oh-my-claudecode:code-reviewer', path: 'docs/tasks/T-001.review-1.md' }]);
+  };
+  write('');
+  assert.equal(fk(dir, 'task', 'check', 'T-001').status, 0); // R1: rule lines optional
+  write('BR-2: VIOLATION — allows refunds after 30 days\n');
+  let r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /BR-2: VIOLATION in docs\/tasks\/T-001\.review-1\.md \(allows refunds after 30 days\)/);
+  const f = path.join(dir, 'docs', 'tasks', 'T-001.md');
+  fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('risk: R1', 'risk: R2'));
+  write('AC-1: PASS — test x\nBR-2: OK — 14-day limit kept\n');
+  r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /BR-1: no "BR-1: OK\|VIOLATION — <note>" line/);
+  assert.doesNotMatch(r.stdout, /BR-2: no/);
+});
+
+test('fk task check: business rules parse in common markdown; retired and draft rules are not required; a VIOLATION stands until a later review says OK; dropping a rule mid-task fails', () => {
+  const dir = repo({ 'docs/00-constraints.md': [
+    '# Constraints', '', '| id | rule |', '|---|---|', '| BR-1 | EU data only |', '', '1. **BR-02**: refunds within 14 days.',
+    '- BR-3 (retired): old rule', '- [ ] BR-4 (draft): proposed rule', '### BR-5: no ads to minors', '', 'See BR-9 for history.',
+    '```', 'BR-7: an example inside a fence', '```', ''].join('\n') });
+  const { businessRules } = taskMod;
+  const rules = businessRules(dir);
+  assert.deepEqual(rules.active, ['BR-1', 'BR-2', 'BR-5']);
+  assert.deepEqual(rules.off, { 'BR-3': 'retired', 'BR-4': 'draft' });
+  fk(dir, 'task', 'new', 'Refunds', '--risk', 'R1');
+  acs(dir, 'T-001', ['x is 7']);
+  put(dir, 'src/app.js', 'export const x = 7;\n');
+  const write = (n, body, verdict) => {
+    review(dir, 'T-001', n, `${fk(dir, 'task', 'stamp', 'T-001').stdout.trim()}\n${body}Verdict: ${verdict}\n`);
+    author(dir, [{ agent_id: `r${n}`, agent_type: 'oh-my-claudecode:code-reviewer', path: `docs/tasks/T-001.review-${n}.md` }]);
+  };
+  // Bold markup and a later OK in the same file do not hide a VIOLATION.
+  write(1, '**BR-2**: **VIOLATION** — 30-day refunds\nSummary: BR-2: OK\n', 'REVISE');
+  write(2, '', 'ACCEPT'); // silent on BR-2: the earlier VIOLATION stands
+  let r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /BR-2: VIOLATION in docs\/tasks\/T-001\.review-1\.md/);
+  assert.match(r.stdout, /BR-4 is a draft/);
+  write(3, 'BR-2: OK — 14-day limit restored\n', 'ACCEPT');
+  r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 0, r.stdout);
+  // Retiring a rule while the task is open needs the founder.
+  const c = path.join(dir, 'docs', '00-constraints.md');
+  fs.writeFileSync(c, fs.readFileSync(c, 'utf8').replace('### BR-5: no ads', '### BR-5 (retired): no ads'));
+  r = fk(dir, 'task', 'check', 'T-001');
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /BR-5 was retired in docs\/00-constraints\.md after the task started/);
 });

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readJson, writeJson, takeSnapshot, refreshSnapshot, readSnapshot, listProtected, log, DEFAULT_CONFIG, RUNTIME,
-  stateDir, readLog, readOverrides, omcPlugin, omcStatus, fetchOmcLatest, cmpVer, OMC_UPDATE, hooksPathStatus, CHAIN_MARK, fromKit, fkHome, loadConfig } from '../hooks/lib.mjs';
+  stateDir, readLog, readOverrides, omcPlugin, omcStatus, fetchOmcLatest, cmpVer, OMC_UPDATE, hooksPathStatus, CHAIN_MARK, fromKit, fkHome, loadConfig, legacyRunner } from '../hooks/lib.mjs';
 import { GATE_KEYS, softening, takeApproval, norm } from '../hooks/directives/gates.mjs';
 import { claudeAncestor } from './cmd/steward/proc.mjs';
 
@@ -121,12 +121,12 @@ async function doctor(withHooks) {
   const probe = spawnSync(process.execPath, [path.join(KIT, 'hooks', 'dispatch.mjs'), 'SessionStart'], { input: '{"source":"resume","cwd":"' + os.tmpdir().replace(/\\/g, '\\\\') + '"}', encoding: 'utf8' });
   add('hook runtime', probe.status === 0, probe.status === 0 ? `dispatcher runs (${Date.now() - t0} ms incl. node start)` : 'dispatcher failed: guards are OFF. ' + (probe.stderr || '').split('\n')[0]);
   const ss = run('skillspector', ['--version']);
-  add('SkillSpector', ss.status === 0, ss.status === 0 ? ss.stdout.trim() : 'not found (needed from 0.4 for install scans)');
+  add('SkillSpector', ss.status === 0 || 'optional', ss.status === 0 ? ss.stdout.trim() : 'not installed; optional, needed to scan skills and plugins before fk provision adds them (fk setup --with skillspector)');
   const gl = run('gitleaks', ['version']);
   const glv = /\d+\.\d+\.\d+/.exec(gl.stdout || '')?.[0];
   const glOk = !!glv && cmpVer(glv, '8.19.0') >= 0; // the pre-commit hook uses `gitleaks git` (8.19+)
   if (gl.status === 0) add('gitleaks >= 8.19', glOk, glOk ? glv : `${glv || gl.stdout.trim()}: too old for \`gitleaks git\` in the pre-commit hook. Update gitleaks.`);
-  else add('gitleaks', 'yellow', 'not found: commits are not scanned for secrets. Install a pinned version: winget install Gitleaks.Gitleaks, brew install gitleaks, or a release binary from github.com/gitleaks/gitleaks/releases');
+  else add('gitleaks', false, 'not found: commits are not scanned for secrets (a core tool). Install the pinned version: fk setup');
   await omcRows(add);
   const { doctorRows } = await import('./cmd/setup/core.mjs');
   for (const [level, item, note] of doctorRows()) add(item, level, note);
@@ -147,7 +147,7 @@ async function doctor(withHooks) {
   print(rows);
 }
 
-const LABEL = { green: '\x1b[32mgreen \x1b[0m', yellow: '\x1b[33myellow\x1b[0m', red: '\x1b[31mred   \x1b[0m' };
+const LABEL = { green: '\x1b[32mgreen   \x1b[0m', yellow: '\x1b[33myellow  \x1b[0m', red: '\x1b[31mred     \x1b[0m', optional: '\x1b[2moptional\x1b[0m' };
 function print(rows) {
   const w = Math.max(...rows.map((r) => r[1].length));
   for (const [s, item, note] of rows) say(`${LABEL[s]}  ${item.padEnd(w)}  ${note}`);
@@ -364,7 +364,7 @@ async function config(sub, key, ...rest) {
   // typed `fk-approve gates` line, used once. runner counts only while no check is set (the gate is then `<runner> check`).
   let gate = null;
   if (GATE_KEYS.includes(key) && !(key === 'runner' && cfg.check)) {
-    const prev = key === 'runner' && cfg.runner === DEFAULT_CONFIG.runner ? null : cfg[key];
+    const prev = key === 'runner' && legacyRunner(cfg, root) ? null : cfg[key];
     const why = softening(prev, value);
     gate = { from: cfg[key] ?? null, how: !norm(prev) ? 'first-set' : norm(prev) === norm(value) ? 'unchanged' : why ? 'approved' : 'extension' };
     if (why) {

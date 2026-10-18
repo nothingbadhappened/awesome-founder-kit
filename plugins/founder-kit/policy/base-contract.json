@@ -75,7 +75,6 @@
     ".claude/settings.local.json", ".claude/omc.jsonc", ".mcp.json", ".githooks/", "~/.claude/settings.json", "~/.claude/CLAUDE.md",
     "~/.claude/hooks/", "~/.claude/skills/", "~/.claude/agents/"],
   "runtimes": { "node": "20.0.0", "python": "3.11.0", "git": "2.40.0", "gitleaks": "8.19.0" },
-  "version_managers": { "default": "mise", "python": "uv" },
   "budget": { "kit_always_on_tokens": 2500, "max_active_mcp_servers": 6, "mcp_tools_soft_cap": 30, "mcp_schema_tokens_soft_cap": 10000,
     "skill_description_chars": 200, "research_total_tokens": 300000, "research_parallel_agents": 4, "research_stale_days": 90 }
 }

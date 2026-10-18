@@ -1,7 +1,7 @@
 # fk-process reference
 
 ## Facts
-Slug; languages/frameworks; modules; the single command runner (`just`/`make`/npm scripts); data classes (public/personal/sensitive); external ports (AI, payments, storage, email, stores…); environments/hosting; platforms (web/iOS/Android); regulated areas (health, finance, kids, biometrics…); other agent tools used on the repo (Codex, Cursor…).
+Slug; languages/frameworks; modules; the check command, the setup command and where the project keeps its commands (its task runner, manifest scripts or build tool, if any); data classes (public/personal/sensitive); external ports (AI, payments, storage, email, stores…); environments/hosting; platforms (web/iOS/Android); regulated areas (health, finance, kids, biometrics…); other agent tools used on the repo (Codex, Cursor…).
 
 ## Scaling
 | Shape | Do |
@@ -14,7 +14,7 @@ Slug; languages/frameworks; modules; the single command runner (`just`/`make`/np
 
 ## Placeholders
 - Flags: `ui` (has UI), `mobile` (native iOS/Android), `ml` (AI/ML output quality matters). `{{#if X}}…{{/if}}`: X true → keep inner text, delete markers; false → delete whole block.
-- Replace: `project`, `Project`, `runner`, `runner_file`, `modules`, `boundary_tool`, `external_ports`, `sensitive_classes`, `r3_areas`, `cost_threshold`, `hosting`, `default_region`, `jurisdictions`, `date`, all `*_glob`, and `<runner>`.
+- Replace: `project`, `Project`, `check`, `setup`, `commands_file` (where the commands live), `services_file` (the file that defines local services; drop it when there is none), `modules`, `boundary_tool`, `external_ports`, `sensitive_classes`, `r3_areas`, `cost_threshold`, `hosting`, `default_region`, `jurisdictions`, `date` and all `*_glob`.
 - Glob folder doesn't exist yet: use the architecture's planned path + `# planned, verify in bootstrap`.
 - Delete impact-map rules for absent areas (e.g. `money` without payments); log each deletion in the changelog.
 

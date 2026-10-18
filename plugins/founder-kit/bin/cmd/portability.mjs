@@ -1,24 +1,19 @@
-// fk portability check [--json] [--strict] | fk portability init [--dry-run]
-// check: can a fresh clone run on any machine with `just setup` and `just check`? Plain pass/warn/skip per item:
-//   pinned tool versions (mise), committed lockfiles, a justfile (setup/dev/check), .env.example, services in compose,
-//   no machine-specific paths, .gitattributes + Git LFS for large binaries, a fresh-clone CI job.
-//   Domain-aware: a project without code checks only paths and large files; games and firmware also check the
-//   engine/toolchain pin. Read-only. Exit 0 with warnings; 1 only with --strict and a warning.
-// init: writes the kit's justfile and .github/workflows/fresh-clone.yml templates (just at the kit's pin) and, when there
-//   is no mise config, a .mise.toml pinning just; never over an existing file.
+// fk portability check [--json] [--strict]
+// check: can a fresh clone run on any machine with the project's own setup and check commands? Plain pass/warn/skip per
+//   item, accepting whatever the project already uses: a documented check command or task runner, a runtime version pin,
+//   committed lockfiles, .env.example, a way to get each service (container file, Testcontainers, docs, hosted URL), no
+//   machine-specific paths, .gitattributes + Git LFS for large binaries, some CI. Never assumes a tool: warnings say what
+//   is missing and give examples. Domain-aware: a project without code checks only paths and large files; games and
+//   firmware also check the engine/toolchain pin. Read-only. Exit 0 with warnings; 1 only with --strict and a warning.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 
-const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const say = (s = '') => process.stdout.write(s + '\n');
 const SKIP_DIRS = new Set(['node_modules', '.git', '.omc', '.fk', 'dist', 'build', 'out', 'coverage', 'target', 'vendor', '.venv', 'venv',
   '__pycache__', '.next', '.turbo', '.cache', '.godot', 'Library', 'Temp', 'Logs', 'obj', '.gradle', '.pio']);
 const SOURCE = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|swift|cs|cpp|cc|cxx|c|h|hpp|rb|php|gd|ex|exs|dart|ino|lua|scala)$/i;
 const MANIFEST = /^(?:package\.json|pyproject\.toml|requirements[\w-]*\.txt|setup\.py|Pipfile|go\.mod|Cargo\.toml|pom\.xml|build\.gradle(?:\.kts)?|Gemfile|composer\.json|.+\.csproj|.+\.sln|deno\.jsonc?|mix\.exs|pubspec\.yaml|Package\.swift|CMakeLists\.txt|platformio\.ini|project\.godot)$/i;
-const MISE = ['.mise.toml', 'mise.toml', '.config/mise.toml', '.mise/config.toml', '.tool-versions'];
-const JUSTFILES = ['justfile', 'Justfile', '.justfile', 'JUSTFILE'];
 const COMPOSE = /(?:^|\/)(?:compose|docker-compose)(?:\.[\w-]+)?\.ya?ml$/i;
 const ENV_EXAMPLE = /(?:^|\/)\.env\.(?:example|sample|template)$|(?:^|\/)example\.env$/i;
 const ENV_READ = /process\.env\b|import\.meta\.env\b|os\.environ\b|os\.getenv\(|getenv\(|std::env::var|env::var\(|os\.Getenv\(|Environment\.GetEnvironmentVariable|ENV\[|ENV\.fetch|System\.getenv/;
@@ -26,8 +21,6 @@ const BINARY = /\.(?:png|jpe?g|gif|webp|psd|tga|tiff?|exr|hdr|bmp|ico|fbx|obj|bl
 const CONFIG = /\.(?:json|jsonc|ya?ml|toml|ini|cfg|conf|properties|xml|code-workspace|env\.example|env\.sample|env\.template)$|(?:^|\/)(?:justfile|Justfile|Makefile|Dockerfile|\.tool-versions|\.npmrc|\.yarnrc|\.gitattributes|\.gitmodules)$/;
 const LOCKS = /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|uv\.lock|poetry\.lock|pdm\.lock|Pipfile\.lock|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock|packages-lock\.json|pubspec\.lock|mix\.lock|deno\.lock)$/;
 const MB = 1024 * 1024;
-const JUST = () => JSON.parse(fs.readFileSync(path.join(KIT, 'compat.lock.json'), 'utf8')).tools.just.version;
-const pinsJust = (text) => /^\s*["']?just["']?\s*(?:=|\s)/m.test(text);
 
 // Services a project usually needs a server for: dependency name -> service (images matched in the compose file).
 const SERVICES = {
@@ -72,23 +65,49 @@ export function projectKind(all) {
   return 'none';
 }
 
-// What to pin first, by kind: games and firmware pin the engine/toolchain itself elsewhere (see the engine item).
-const PIN_HINT = {
-  software: 'add .mise.toml with exact versions (`mise use node@22.11.0` writes it), so every machine gets the same runtimes',
-  game: 'add .mise.toml for the helper tools (`mise use just@<version>`); the engine version itself is pinned by the engine (Unity: ProjectSettings/ProjectVersion.txt; Godot: the exact editor build)',
-  embedded: 'add .mise.toml for the toolchain (e.g. the ESP-IDF version) and the helper tools; PlatformIO pins its platform version in platformio.ini (platform = <name>@<x.y.z>)',
-};
+// Runtime version pins, whatever the ecosystem: version files, mise/asdf, devcontainer, Nix, or a pin inside a manifest.
+const PIN_FILE = /^(?:\.?mise\.toml|\.tool-versions|\.nvmrc|\.node-version|\.python-version|\.ruby-version|\.java-version|\.sdkmanrc|\.terraform-version|\.fvmrc|rust-toolchain(?:\.toml)?|global\.json|\.?devcontainer\.json|flake\.nix|shell\.nix)$/;
+const PIN_IN = [
+  [/(?:^|\/)go\.mod$/, /^\s*(?:go|toolchain)\s+\S/m],
+  [/(?:^|\/)package\.json$/, /"(?:engines|volta)"\s*:\s*\{\s*"/],
+  [/(?:^|\/)Gemfile$/, /^\s*ruby\s+["']\d/m],
+  [/(?:^|\/)pubspec\.yaml$/, /^environment:\s*\n\s+(?:sdk|flutter):\s*\S/m],
+  [/(?:^|\/)build\.gradle(?:\.kts)?$/, /JavaLanguageVersion\.of\(/],
+  [/(?:^|\/)(?:Dockerfile|Containerfile)(?:\.[\w-]+)?$/, /^\s*FROM\s+(?:--\S+\s+)*[^\s:@]+(?::(?!latest\b)[\w.-]+|@sha256:)/im],
+];
+const LOOSE = /^\s*(?:latest|lts(?:\/\S*)?|stable|node|system)\s*$/i;
+// Examples per ecosystem for the warning (never one tool as THE fix).
+const PIN_HINT = [
+  [/(?:^|\/)(?:package\.json|deno\.jsonc?)$/, '.nvmrc, .node-version, "engines" in package.json'],
+  [/(?:^|\/)(?:pyproject\.toml|requirements[\w-]*\.txt|setup\.py|Pipfile)$/, '.python-version'],
+  [/(?:^|\/)Cargo\.toml$/, 'rust-toolchain.toml'],
+  [/(?:^|\/)Gemfile$/, '.ruby-version, a ruby line in the Gemfile'],
+  [/(?:^|\/)(?:pom\.xml|build\.gradle(?:\.kts)?)$/, '.java-version, .sdkmanrc, a Gradle toolchain'],
+  [/\.(?:csproj|sln)$/, 'global.json'],
+  [/(?:^|\/)pubspec\.yaml$/, 'the sdk range in pubspec.yaml, .fvmrc'],
+];
 function toolVersions(root, all, kind) {
-  const file = MISE.find((f) => all.includes(f));
-  if (!file) return ['warn', `no pinned tool versions: ${PIN_HINT[kind] || PIN_HINT.software}`];
-  const text = read(root, file);
-  const pins = file.endsWith('.tool-versions') ? text.split(/\r?\n/).filter((l) => /^\s*[\w-]+\s+\S/.test(l))
-    : (/\[tools\]([\s\S]*?)(?:\n\[|$)/.exec(text)?.[1] || '').split(/\r?\n/).filter((l) => /^\s*["\w:./@-]+\s*=/.test(l));
-  const loose = pins.filter((l) => /\blatest\b|=\s*["']?(?:lts|stable)["']?\s*$/i.test(l));
-  if (loose.length) return ['warn', `${file} has unpinned versions (${loose.map((l) => l.trim()).slice(0, 3).join('; ')}): use exact versions`];
-  if (!pins.length) return ['warn', `${file} lists no tools yet`];
-  if (JUSTFILES.some((f) => all.includes(f)) && !pinsJust(text)) return ['warn', `${file} does not pin just, but the project has a justfile: add just = "${JUST()}" (\`fk portability init\` offers it)`];
-  return ['pass', `${file} pins ${pins.length} tool(s)`];
+  const base = (f) => f.split('/').pop();
+  const files = all.filter((f) => PIN_FILE.test(base(f)) || f === '.mise/config.toml' || PIN_IN.some(([n, re]) => n.test(f) && re.test(read(root, f))));
+  const loose = [];
+  for (const f of files) {
+    const text = read(root, f), b = base(f);
+    if (/^\.(?:nvmrc|node-version|python-version|ruby-version|java-version)$/.test(b) && LOOSE.test(text)) loose.push(`${f}: ${text.trim()}`);
+    if (b === '.tool-versions') text.split(/\r?\n/).filter((l) => /^\s*[\w-]+\s+(?:latest|lts|stable)\b/i.test(l)).forEach((l) => loose.push(`${f}: ${l.trim()}`));
+    if (/mise\.toml$|^\.mise\/config\.toml$/.test(f)) (/\[tools\]([\s\S]*?)(?:\n\[|$)/.exec(text)?.[1] || '').split(/\r?\n/)
+      .filter((l) => /\blatest\b|=\s*["']?(?:lts|stable)["']?\s*$/i.test(l)).forEach((l) => loose.push(`${f}: ${l.trim()}`));
+    // "engines" in package.json is usually a range (>=, ^, ~): it states support, it pins nothing.
+    if (b === 'package.json') {
+      let eng = null;
+      try { eng = JSON.parse(text).engines; } catch { /* not JSON */ }
+      for (const [k, v] of Object.entries(eng && typeof eng === 'object' ? eng : {})) if (/[<>^~*]|\|\||(?:^|\.)x\b/i.test(String(v))) loose.push(`${f}: engines.${k} "${v}"`);
+    }
+  }
+  if (loose.length) return ['warn', `unpinned versions (${loose.slice(0, 3).join('; ')}): use exact versions`];
+  if (files.length) return ['pass', `runtime versions pinned in ${files.slice(0, 3).join(', ')}`];
+  if (kind !== 'software') return ['skip', 'the engine/toolchain item covers the version that matters here'];
+  const hints = [...new Set(all.flatMap((f) => PIN_HINT.filter(([re]) => re.test(f)).map(([, h]) => h)))];
+  return ['warn', `no runtime version pinned: pin it the way this ecosystem does (e.g. ${hints.length ? hints.slice(0, 3).join('; ') : 'a version file, a devcontainer, a Dockerfile base image tag'}), so every machine runs the same version`];
 }
 
 function engine(root, all, kind) {
@@ -96,7 +115,7 @@ function engine(root, all, kind) {
     const unity = all.find((f) => /(?:^|\/)ProjectSettings\/ProjectVersion\.txt$/.test(f));
     if (unity) { const v = /m_EditorVersion:\s*(\S+)/.exec(read(root, unity))?.[1]; return v ? ['pass', `Unity ${v} pinned in ${unity}`] : ['warn', `${unity} has no m_EditorVersion`]; }
     const godot = all.find((f) => f.split('/').pop() === 'project.godot');
-    if (godot) { const v = /config\/features=PackedStringArray\("(\d+\.\d+)/.exec(read(root, godot))?.[1]; return v ? ['pass', `Godot ${v} named in ${godot}; pin the exact editor build in .mise.toml or the README`] : ['warn', `${godot} names no engine version`]; }
+    if (godot) { const v = /config\/features=PackedStringArray\("(\d+\.\d+)/.exec(read(root, godot))?.[1]; return v ? ['pass', `Godot ${v} named in ${godot}; write the exact editor build where the team looks (e.g. the README, the CI config)`] : ['warn', `${godot} names no engine version`]; }
     return ['warn', 'pin the exact engine version in the repo (and in CI)'];
   }
   const pio = all.find((f) => f.split('/').pop() === 'platformio.ini');
@@ -105,7 +124,7 @@ function engine(root, all, kind) {
     const loose = plats.filter((p) => !/@\s*\d/.test(p));
     return !plats.length ? ['warn', `${pio} names no platform`] : loose.length ? ['warn', `pin the platform version in ${pio} (e.g. platform = ${loose[0]}@<x.y.z>)`] : ['pass', `${pio} pins ${plats.join(', ')}`];
   }
-  return ['warn', 'pin the toolchain version (ESP-IDF, Arduino core, compiler) in .mise.toml or the CI image'];
+  return ['warn', 'pin the toolchain version (ESP-IDF, Arduino core, compiler) where the build reads it (e.g. a version file, the CI image, a devcontainer)'];
 }
 
 function lockfiles(root, all, tracked) {
@@ -130,12 +149,23 @@ function lockfiles(root, all, tracked) {
   return want.length ? ['warn', `no committed lockfile for ${want.slice(0, 4).join(', ')}: commit it so every machine installs the same versions`] : ['pass', `lockfiles committed for ${ecos.length} manifest(s)`];
 }
 
-function commands(root, all, kind) {
-  const file = JUSTFILES.find((f) => all.includes(f));
-  if (!file) return ['warn', 'no justfile: `fk portability init` adds one with setup, dev, check and down'];
-  const recipes = new Set([...read(root, file).matchAll(/^@?([A-Za-z_][\w-]*)(?:[^\n:=]*)?:(?!=)/gm)].map((m) => m[1]));
-  const missing = ['setup', ...(kind === 'software' ? ['dev'] : []), 'check'].filter((r) => !recipes.has(r));
-  return missing.length ? ['warn', `${file} has no ${missing.join(', ')} recipe(s)`] : ['pass', `${file}: ${['setup', 'dev', 'check'].filter((r) => recipes.has(r)).join(', ')}`];
+// The project's own way to set up and check: a check command recorded in .fk/config.json, else any task runner or a
+// build tool that is its own runner (cargo, go, gradle, maven, dotnet, mix, cmake…), at the root or one folder down.
+const RUNNER = /^(?:\.?justfile|Justfile|JUSTFILE|[Mm]akefile|GNUmakefile|Taskfile\.ya?ml|Rakefile|build\.gradle(?:\.kts)?|gradlew|pom\.xml|mvnw|build\.sbt|Cargo\.toml|go\.mod|mix\.exs|CMakeLists\.txt|meson\.build|platformio\.ini|Package\.swift|pubspec\.yaml|.+\.csproj|.+\.sln|noxfile\.py|tox\.ini|deno\.jsonc?)$/;
+const SCRIPTS_IN = [
+  [/(?:^|\/)package\.json$/, /"scripts"\s*:\s*\{\s*"/],
+  [/(?:^|\/)composer\.json$/, /"scripts"\s*:\s*\{\s*"/],
+  [/(?:^|\/)pyproject\.toml$/, /^\[(?:tool\.poe|project\.scripts|tool\.hatch|tool\.pdm\.scripts|tool\.taskipy)\b/m],
+];
+function commands(root, all) {
+  let configured = '';
+  try { configured = JSON.parse(read(root, '.fk/config.json')).check || ''; } catch { /* none */ }
+  if (configured) return ['pass', `check command recorded: ${configured}`];
+  const near = all.filter((f) => f.split('/').length <= 2);
+  const file = near.find((f) => RUNNER.test(f.split('/').pop()) || SCRIPTS_IN.some(([n, re]) => n.test(f) && re.test(read(root, f))))
+    || near.find((f) => /^scripts\/[^/]+$/.test(f));
+  if (file) return ['pass', `the project's commands live in ${file.startsWith('scripts/') ? 'scripts/' : file}`];
+  return ['warn', 'no single place for the setup and check commands: keep them the way this ecosystem does (e.g. package.json scripts, a Makefile, pyproject scripts, a scripts/ folder) and record the check with fk config set check "<cmd>"'];
 }
 
 function envNames(root, all) {
@@ -171,12 +201,21 @@ function services(root, all) {
   const d = deps(root, all), names = envNames(root, all);
   const need = Object.entries(SERVICES).filter(([, s]) => [...d].some((x) => s.deps.test(x)) || [...names].some((n) => s.env.test(n))).map(([k]) => k);
   if (!need.length) return ['pass', 'no database, cache or queue server detected'];
-  const composeFiles = all.filter((f) => COMPOSE.test(f) && f.split('/').length <= 3);
-  const text = composeFiles.map((f) => read(root, f)).join('\n');
-  const images = [...text.matchAll(/^\s*image:\s*["']?([^\s"']+)/gm)].map((m) => m[1]).join(' ');
-  const missing = need.filter((k) => !SERVICES[k].image.test(images) && !new RegExp(`^\\s{2}${k}\\s*:`, 'm').test(text));
-  if (!composeFiles.length) return ['warn', `uses ${need.join(', ')} but no compose.yaml defines it: add it there so \`just dev\` starts it on any machine (Podman or Docker)`];
-  return missing.length ? ['warn', `${composeFiles[0]} does not define ${missing.join(', ')}`] : ['pass', `${composeFiles[0]} runs ${need.join(', ')}`];
+  // Any of: a container file (compose, devcontainer) naming it, Testcontainers, the README/docs, a hosted URL in .env.example.
+  const containers = all.filter((f) => (COMPOSE.test(f) || /(?:^|\/)\.?devcontainer\.json$/.test(f)) && f.split('/').length <= 3);
+  const ctext = containers.map((f) => read(root, f)).join('\n');
+  const images = [...ctext.matchAll(/^\s*["']?image["']?\s*:\s*["']?([^\s"',]+)/gm)].map((m) => m[1]).join(' ');
+  const testcontainers = [...d].some((x) => /testcontainers/i.test(x)) || all.filter((f) => MANIFEST.test(f.split('/').pop())).some((f) => /testcontainers/i.test(read(root, f)));
+  const docs = all.filter((f) => /^(?:README[^/]*\.md|docs\/.+\.md)$/i.test(f)).map((f) => [f, read(root, f, 256 * 1024)]);
+  const mentioned = (k) => docs.find(([, t]) => new RegExp(`\\b${k}`, 'i').test(t) || SERVICES[k].image.test(t))?.[0];
+  const hosted = all.filter((f) => ENV_EXAMPLE.test(f)).flatMap((f) => [...read(root, f).matchAll(/^\s*(?:export\s+)?([A-Za-z_]\w*)\s*=\s*["']?(\w[\w+.-]*:\/\/[^\s"']+)/gm)])
+    .filter((m) => !/:\/\/(?:[^@/]*@)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])\b/.test(m[2]));
+  const how = (k) => SERVICES[k].image.test(images) || new RegExp(`^\\s{2}${k}\\s*:`, 'm').test(ctext) ? containers[0]
+    : testcontainers ? 'Testcontainers' : hosted.some((m) => SERVICES[k].env.test(m[1])) ? 'a hosted URL in .env.example'
+      : mentioned(k) ? `mentioned in ${mentioned(k)}` : '';
+  const missing = need.filter((k) => !how(k));
+  if (missing.length) return ['warn', `uses ${missing.join(', ')} but nothing says how a fresh clone gets it: define it in a container file (e.g. compose.yaml, a devcontainer), start it from the tests (e.g. Testcontainers), document it in the README, or point .env.example at a hosted instance`];
+  return ['pass', need.map((k) => `${k}: ${how(k)}`).join('; ')];
 }
 
 // Machine-specific absolute paths in committed config (drive paths, personal home folders); placeholders pass.
@@ -221,15 +260,14 @@ function lfs(root, all, kind, isGit) {
   return ['pass', big.length ? `${big.length} large binary file(s), all in Git LFS` : 'no large binary files'];
 }
 
+// Any CI builds on a machine that has never seen the project; which one is the project's choice.
 function ci(root, all) {
-  const wf = all.filter((f) => /^\.github\/workflows\/[^/]+\.ya?ml$|^\.gitlab-ci\.yml$|^azure-pipelines\.yml$|^bitbucket-pipelines\.yml$/.test(f));
-  const fresh = wf.find((f) => /just setup|mise install|mise-action/.test(read(root, f)));
-  if (fresh) return ['pass', `${fresh} builds from a fresh clone`];
-  return ['warn', `${wf.length ? 'CI exists but no job runs `just setup` on a fresh clone' : 'no CI'}: \`fk portability init\` adds .github/workflows/fresh-clone.yml`];
+  const wf = all.find((f) => /^\.(?:github|gitea|forgejo)\/workflows\/[^/]+\.ya?ml$|^\.gitlab-ci\.yml$|^azure-pipelines\.yml$|^bitbucket-pipelines\.yml$|^\.circleci\/config\.yml$|^\.travis\.yml$|^\.woodpecker(?:\.ya?ml|\/[^/]+\.ya?ml)$|^\.buildkite\/[^/]+\.ya?ml$|^Jenkinsfile$/.test(f));
+  return wf ? ['pass', `CI config present (${wf})`] : ['warn', 'no CI: add a job that runs the check command on a fresh machine, in whatever CI the project uses (e.g. GitHub Actions, GitLab CI)'];
 }
 
-const LABELS = { tools: 'Tool versions', engine: 'Engine / toolchain', locks: 'Lockfiles', commands: 'One command interface', env: 'Settings (.env)',
-  services: 'Services in containers', paths: 'No machine paths', attributes: 'Line endings', lfs: 'Large files', ci: 'Fresh-clone CI' };
+const LABELS = { tools: 'Runtime versions', engine: 'Engine / toolchain', locks: 'Lockfiles', commands: 'One command interface', env: 'Settings (.env)',
+  services: 'Services', paths: 'No machine paths', attributes: 'Line endings', lfs: 'Large files', ci: 'CI on a fresh machine' };
 
 export function check(root) {
   const { git: isGit, all, tracked } = files(root);
@@ -240,7 +278,7 @@ export function check(root) {
     tools: code ? toolVersions(root, all, kind) : noCode,
     ...(kind === 'game' || kind === 'embedded' ? { engine: engine(root, all, kind) } : {}),
     locks: kind === 'software' || kind === 'game' ? lockfiles(root, all, tracked) : code ? ['skip', 'no package manager lockfile for this kind of project'] : noCode,
-    commands: code ? commands(root, all, kind) : noCode,
+    commands: code ? commands(root, all) : noCode,
     env: kind === 'software' ? env(root, all, tracked) : code ? ['skip', 'not a service with settings'] : noCode,
     services: kind === 'software' ? services(root, all) : code ? ['skip', 'no server-side services expected'] : noCode,
     paths: paths(root, tracked),
@@ -255,39 +293,15 @@ export function check(root) {
 
 const KIND = { software: 'software project', game: 'game project (large files and the engine version matter most)', embedded: 'firmware/hardware project (the toolchain version matters most)', none: 'project without code (code items skipped)' };
 
-function init(root, dry) {
-  const pairs = [[path.join(KIT, 'templates', 'project', 'justfile'), JUSTFILES.map((f) => path.join(root, f)), 'justfile'],
-    [path.join(KIT, 'templates', 'project', 'ci', 'fresh-clone.yml'), [path.join(root, '.github', 'workflows', 'fresh-clone.yml')], '.github/workflows/fresh-clone.yml']];
-  for (const [src, existing, rel] of pairs) {
-    const have = existing.find((f) => fs.existsSync(f));
-    if (have) { say(`kept    ${path.relative(root, have).split(path.sep).join('/')} (already there; never overwritten)`); continue; }
-    if (dry) { say(`would create ${rel}`); continue; }
-    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-    fs.writeFileSync(path.join(root, rel), fs.readFileSync(src, 'utf8').replace(/just@\d+\.\d+\.\d+/g, `just@${JUST()}`)); // the kit's pin at init time
-    say(`created ${rel}`);
-  }
-  // just in the mise config: a new .mise.toml only; an existing file is never rewritten (the line to add is printed).
-  const mise = MISE.find((f) => fs.existsSync(path.join(root, f)));
-  const line = `just = "${JUST()}"`;
-  if (!mise) {
-    if (dry) say(`would create .mise.toml (${line})`);
-    else { fs.writeFileSync(path.join(root, '.mise.toml'), `[tools]\n${line}\n`); say(`created .mise.toml (${line})`); }
-  } else if (!pinsJust(fs.readFileSync(path.join(root, mise), 'utf8'))) {
-    say(`kept    ${mise} (never rewritten); to pin just, add ${mise === '.tool-versions' ? `the line: just ${JUST()}` : `under [tools]: ${line}`}`);
-  }
-  if (!dry) say('fk portability: replace the GATE-MISSING and example lines with the project\'s real commands, then run `fk portability check`.');
-}
-
 export default async function portability(args) {
   const [sub] = args;
   const r = git(process.cwd(), ['rev-parse', '--show-toplevel']);
   const root = r.status === 0 ? path.resolve(r.stdout.trim()) : process.cwd();
-  if (sub === 'init') return init(root, args.includes('--dry-run'));
-  if (sub !== 'check') { say('usage: fk portability check [--json] [--strict] | fk portability init [--dry-run]'); process.exitCode = 1; return; }
+  if (sub !== 'check') { say('usage: fk portability check [--json] [--strict]'); process.exitCode = 1; return; }
   const res = check(root);
   if (args.includes('--json')) say(JSON.stringify(res, null, 2));
   else {
-    say(`fk portability: ${KIND[res.kind]}. Goal: a fresh clone runs on any machine with \`just setup\` and \`just check\`.`);
+    say(`fk portability: ${KIND[res.kind]}. Goal: a fresh clone runs on any machine with the project's own setup and check commands.`);
     const w = Math.max(...res.items.map((i) => i.label.length));
     for (const i of res.items) say(`  ${i.status.padEnd(4)}  ${i.label.padEnd(w)}  ${i.note}`);
     say(`fk portability: ${res.pass} pass, ${res.warn} warn, ${res.skip} skip.${res.warn ? ' Warnings never block work; fix them as small tasks.' : ''}`);

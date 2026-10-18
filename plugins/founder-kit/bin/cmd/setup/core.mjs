@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readJson, writeJson, cmpVer, omcPlugin, omcStatus, fetchOmcLatest, OMC_UPDATE, fkHome, homeCache } from '../../../hooks/lib.mjs';
+import { readJson, writeJson, sanctionedJson, cmpVer, omcPlugin, omcStatus, fetchOmcLatest, OMC_UPDATE, fkHome, homeCache } from '../../../hooks/lib.mjs';
 import { installSteps, pluginSteps, palaceInitStep, machineSteps, FOUNDER } from './recipes.mjs';
 import { appendLedger, ledgerFile, tilde, readLedger, itemStates } from './ledger.mjs';
 
@@ -18,22 +18,24 @@ export const statusFile = () => homeCache('base-tools.json');
 export const osName = (p = process.platform) => (p === 'win32' ? 'win' : p === 'darwin' ? 'mac' : 'linux');
 
 // Order matters: later tools install with earlier ones (uv before MemPalace, claude before plugins).
+// core: always checked and planned. The rest are optional: planned only when asked for (fk setup --with <id>, --all, or the
+// project's .fk/toolchain.json); needs: the optional tools one installs with (per OS when an object).
 export const TOOLS = [
-  { id: 'git', label: 'git', bin: 'git', size: 'about 300 MB', why: 'keeps every version of your project, so nothing is ever lost' },
+  { id: 'git', core: true, label: 'git', bin: 'git', size: 'about 300 MB', why: 'keeps every version of your project, so nothing is ever lost' },
   { id: 'git-lfs', label: 'Git LFS', bin: 'git-lfs', args: ['version'], size: 'about 15 MB', why: 'keeps big files (images, audio, game assets) out of the way so the project stays fast to copy' },
-  { id: 'node', label: 'Node.js', bin: 'node', size: 'about 100 MB', why: 'runs the kit\'s safety checks' },
+  { id: 'node', core: true, label: 'Node.js', bin: 'node', size: 'about 100 MB', why: 'runs the kit\'s safety checks' },
   { id: 'uv', label: 'uv', bin: 'uv', size: 'about 40 MB', why: 'installs the Python helpers below, each in its own sealed box' },
   { id: 'mise', label: 'mise', bin: 'mise', size: 'about 30 MB', why: 'pins each project\'s tool versions, so the project runs the same on any computer' },
-  { id: 'just', label: 'just', bin: 'just', size: 'about 5 MB', why: 'one short command for each job (just setup, just check), the same on every computer' },
-  { id: 'gh', label: 'GitHub CLI', bin: 'gh', size: 'about 40 MB', why: 'lets Claude publish your project to GitHub and run its checks there' },
+  { id: 'just', label: 'just', bin: 'just', size: 'about 5 MB', why: 'one short command for each job (just setup, just check), the same on every computer', needs: { mac: ['mise'], linux: ['mise'] } },
+  { id: 'gh', label: 'GitHub CLI', bin: 'gh', size: 'about 40 MB', why: 'lets Claude publish your project to GitHub and run its checks there', needs: { linux: ['mise'] } },
   { id: 'podman', label: 'Containers (Podman)', bin: 'podman', size: 'about 1-2 GB with its small Linux machine', why: 'runs databases and other services in sealed boxes, so nothing is installed into your computer itself' },
-  { id: 'podman-compose', label: 'Compose for Podman', bin: 'podman-compose', size: 'about 10 MB', why: 'starts all of a project\'s services with one command (podman compose up)' },
-  { id: 'claude-code', label: 'Claude Code', bin: 'claude', size: 'about 200 MB', why: 'the AI assistant the kit runs inside' },
-  { id: 'oh-my-claudecode', label: 'oh-my-claudecode', size: 'about 20 MB', why: 'the agent team and workflow the kit builds on' },
+  { id: 'podman-compose', label: 'Compose for Podman', bin: 'podman-compose', size: 'about 10 MB', why: 'starts all of a project\'s services with one command (podman compose up)', needs: ['uv'] },
+  { id: 'claude-code', core: true, label: 'Claude Code', bin: 'claude', size: 'about 200 MB', why: 'the AI assistant the kit runs inside' },
+  { id: 'oh-my-claudecode', core: true, label: 'oh-my-claudecode', size: 'about 20 MB', why: 'the agent team and workflow the kit builds on' },
   { id: 'codebase-memory-mcp', label: 'codebase-memory', bin: 'codebase-memory-mcp', size: 'about 40 MB', why: 'gives Claude a map of your code so it reads less and costs less' },
-  { id: 'mempalace', label: 'MemPalace', bin: 'mempalace', size: 'about 500 MB', why: 'remembers decisions between sessions, on your machine only' },
-  { id: 'skillspector', label: 'SkillSpector', bin: 'skillspector', size: 'about 150 MB', why: 'scans add-ons for malicious instructions before they are used' },
-  { id: 'gitleaks', label: 'gitleaks', bin: 'gitleaks', args: ['version'], size: 'about 20 MB', why: 'stops passwords and keys from being saved into your project' },
+  { id: 'mempalace', label: 'MemPalace', bin: 'mempalace', size: 'about 500 MB', why: 'remembers decisions between sessions, on your machine only', needs: ['uv'] },
+  { id: 'skillspector', label: 'SkillSpector', bin: 'skillspector', size: 'about 150 MB', why: 'scans add-ons for malicious instructions before they are used', needs: ['uv'] },
+  { id: 'gitleaks', core: true, label: 'gitleaks', bin: 'gitleaks', args: ['version'], size: 'about 20 MB', why: 'stops passwords and keys from being saved into your project' },
 ];
 
 const WIN = process.platform === 'win32';
@@ -90,8 +92,38 @@ function ghSignedIn(env) {
   try { return /github\.com/.test(fs.readFileSync(path.join(dir, 'hosts.yml'), 'utf8')); } catch { return false; }
 }
 
+// An optional tool nobody asked for is listed, never planned: missing is neutral, and a copy that is here is not set up
+// further. Only an installed copy below the floor stays red (it is the founder's own tool, and too old for the kit).
+export const OPTIONAL_NOTE = 'optional; proposed per project when it needs it';
+function settle(row, wanted) {
+  if (wanted) return row;
+  delete row.founder;
+  if (row.reason === 'missing') return Object.assign(row, { level: 'optional', reason: 'optional', note: OPTIONAL_NOTE, steps: [] });
+  if (row.reason === 'below-floor') return row;
+  if (row.steps.length && row.level === 'red') Object.assign(row, { level: 'yellow', note: `${row.note}; fk setup --with ${row.id} sets it up` });
+  row.steps = [];
+  return row;
+}
+
+// The optional tools this run plans: --with <ids>, --all, or what the project approved; plus what they install with.
+export function wantedTools(ids = [], o = osName()) {
+  const want = new Set(ids.includes('all') ? TOOLS.map((t) => t.id) : ids);
+  // apt's gh is below the floor and just has no apt/brew-free route: both come pinned through mise there.
+  for (const t of TOOLS) if (want.has(t.id)) for (const n of (Array.isArray(t.needs) ? t.needs : t.needs?.[o]) || []) want.add(n);
+  return want;
+}
+
+// .fk/toolchain.json "approved" entries ("name@version", "name==version", "brew:name") naming a kit tool by id or binary.
+export function projectTools(root) {
+  if (!root) return [];
+  const tc = sanctionedJson(root, '.fk/toolchain.json', {});
+  const names = (Array.isArray(tc.approved) ? tc.approved : []).map((e) => String(e).replace(/^[\w-]+:/, '').replace(/(?<=.)(@|==).*$/, '').toLowerCase());
+  return TOOLS.filter((t) => !t.core && names.some((n) => n === t.id || n === t.bin)).map((t) => t.id);
+}
+
 // One row per tool: { id, label, level, reason, version, note, steps: [{ action, cmd|fn, rollback }], founder?: [...] }.
-export async function detect(lock, { env = process.env, os: o = osName(), has } = {}) {
+// want: the optional tools to plan (wantedTools); core tools are always planned.
+export async function detect(lock, { env = process.env, os: o = osName(), has, want = new Set() } = {}) {
   has ||= (bin) => !!(o === 'win' ? probe('where.exe', [bin], env) : probe('sh', ['-c', `command -v ${bin}`], env));
   const rows = [];
   const next = [];
@@ -101,6 +133,7 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
   const hasM = (bin) => (bin === 'mise' ? mise() : has(bin));
   for (const tool of TOOLS) {
     const spec = lock.tools[tool.id];
+    const wanted = tool.core || want.has(tool.id);
     // found: what was already in place before this run (the ledger records it as pre-existing: never removed by the kit).
     const row = { id: tool.id, label: tool.label, why: tool.why, size: tool.size, version: null, level: 'green', reason: 'ok', note: '', steps: [], found: [] };
     const found = (item, extra = {}) => row.found.push({ item, tool: tool.id, ...extra });
@@ -116,7 +149,7 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
         composeRow(row, spec, containers, { env, o, lock, add });
         if (row.version) found(tool.id, { version: row.version });
       }
-      rows.push(row);
+      rows.push(settle(row, wanted));
       continue;
     }
 
@@ -170,7 +203,7 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
     if (level === 'red') add(reason === 'missing' ? 'install' : 'upgrade', installSteps(tool.id, lock, o, { has: hasM, upgrade: reason === 'below-floor' }));
 
     if (row.via === 'mise' && level === 'green') row.note = `through mise (agents run it as \`mise exec -- ${tool.bin}\`)`;
-    if (tool.id === 'mise' && level === 'red') next.push('mise: agents run project tools with `mise exec -- <command>`, no setup needed. To use them in your own terminal too, add one line to your shell profile: `eval "$(mise activate bash)"` (zsh: `mise activate zsh`; PowerShell: `mise activate pwsh | Out-String | Invoke-Expression`).');
+    if (tool.id === 'mise' && level === 'red' && wanted) next.push('mise: agents run project tools with `mise exec -- <command>`, no setup needed. To use them in your own terminal too, add one line to your shell profile: `eval "$(mise activate bash)"` (zsh: `mise activate zsh`; PowerShell: `mise activate pwsh | Out-String | Invoke-Expression`).');
     if (tool.id === 'gh' && !ghSignedIn(env)) {
       row.founder = [row.via === 'mise' || row.steps.some((s) => /^mise /.test(s.cmd)) ? FOUNDER.ghMise : FOUNDER.gh];
       if (level === 'green') row.note = [row.note, 'not signed in yet (your step: gh auth login)'].filter(Boolean).join('; ');
@@ -223,7 +256,7 @@ export async function detect(lock, { env = process.env, os: o = osName(), has } 
         row.note = [row.note, ...notes].filter(Boolean).join('; ');
       }
     }
-    rows.push(row);
+    rows.push(settle(row, wanted));
   }
   return { rows, next };
 }
@@ -280,15 +313,15 @@ function composeRow(row, spec, c, { env, o, lock, add }) {
   if (level === 'red') add(reason === 'missing' || o === 'win' ? 'install' : 'upgrade', installSteps('podman-compose', lock, o));
 }
 
-// `fk doctor` rows for the portability tools and the container runtime; refreshes the cached machine status that the
-// steward's weekly note reads (the note itself never starts a process).
+// `fk doctor` rows for the optional portability tools and the container runtime (missing: neutral); refreshes the cached
+// machine status that the steward's weekly note reads (the note itself never starts a process).
 export function doctorRows(env = process.env, o = osName()) {
   const lock = loadLock();
   const rows = [];
   const row = (item, level, note) => rows.push([level, item, note]);
   const ver = (id, bin, args) => {
     const v = probe(bin, args, env)?.version;
-    if (!v) return row(id, 'yellow', 'not found: run fk setup'), null;
+    if (!v) return row(id, 'optional', `not installed; ${OPTIONAL_NOTE} (fk setup --with ${id})`), null;
     row(id, cmpVer(v, lock.tools[id].min) >= 0 || 'yellow', cmpVer(v, lock.tools[id].min) >= 0 ? v : `${v}, older than ${lock.tools[id].min}: run fk setup`);
     return v;
   };
@@ -302,7 +335,7 @@ export function doctorRows(env = process.env, o = osName()) {
   else ver('gh', 'gh', ['--version']);
   if ((ghPath || ghMise) && !ghSignedIn(env)) rows.at(-1).splice(0, 3, 'yellow', 'gh', 'not signed in: the founder runs gh auth login');
   const c = containerState(env, o);
-  if (!c.engine) row('containers', 'yellow', 'neither Podman nor Docker found: run fk setup');
+  if (!c.engine) row('containers', 'optional', `neither Podman nor Docker found; ${OPTIONAL_NOTE} (fk setup --with podman)`);
   else if (c.engine === 'docker') {
     const up = !!probe('docker', ['info', '--format', '{{.ServerVersion}}'], env);
     row('containers', up || 'yellow', `Docker ${c.version || ''}${up ? '' : ' (not running)'}`);

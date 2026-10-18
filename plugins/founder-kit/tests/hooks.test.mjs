@@ -495,3 +495,16 @@ test('system package managers: approved by name (fk-approve tool brew:<name>), n
   assert.equal(brew('brew install wget'), 'allow');
   assert.equal(brew('winget install wget'), 'deny', 'approved for brew only');
 });
+
+test('A1: with no check command agreed, the pointer names no tool and says to find or ask; every role sees the business rules', async () => {
+  const { pointer } = await import('../hooks/guards/pointer.mjs');
+  const { DEFAULT_CONFIG } = await import('../hooks/lib.mjs');
+  for (const t of ['executor', 'code-reviewer', 'planner', 'Explore']) {
+    const p = pointer(DEFAULT_CONFIG, t);
+    assert.doesNotMatch(p, /npm|just|null|undefined/, t);
+    assert.match(p, /BR-n/, t);
+    assert.ok(p.split(/\s+/).length <= 60, t);
+  }
+  assert.match(pointer(DEFAULT_CONFIG, 'executor'), /No check command agreed yet/);
+  assert.match(pointer({ ...DEFAULT_CONFIG, check: 'make test' }, 'executor'), /`make test` must be green/);
+});

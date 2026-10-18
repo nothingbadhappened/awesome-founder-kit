@@ -2,7 +2,7 @@
 
 Founder Kit lets someone who is **not** a programmer build a real product with AI agents in Claude Code. [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) (OMC) runs the development workflow: planning, building, verifying, reviewing. The kit never replaces it. It adds the founder layer on top (idea, honest review, decisions, brand, journal) and light governance (records, checks and guards) so the work keeps to what you agreed, in any kind of project.
 
-> Status: **v0.9.0**. The rules come from real projects, mistakes included. Expect changes.
+> Status: **v0.10.0**. The rules come from real projects, mistakes included. Expect changes.
 
 ## Who it is for, and what you get
 
@@ -15,7 +15,7 @@ You decide *what* and *why*; the agents research, plan, build, check each other 
 
 ## Install
 
-One command installs what the kit needs and is missing: git with Git LFS, Node.js, uv, mise, just, the GitHub CLI (gh), Podman (an existing Docker is kept instead), Claude Code, OMC, codebase-memory-mcp, MemPalace, NVIDIA SkillSpector, gitleaks and the kit itself. All free. Podman with its small Linux machine takes about 1–2 GB.
+One command installs what the kit needs and is missing: git, Node.js, Claude Code, OMC, gitleaks (the secret scan behind the commit guard) and the kit itself. All free. Other tools are optional and installed only when you ask: Git LFS, uv, mise, just, the GitHub CLI (gh), Podman (an existing Docker is kept instead), codebase-memory-mcp, MemPalace and NVIDIA SkillSpector. A project's toolchain proposal names the ones it needs; add any yourself with `--with <id,id>` (or `--all`) on the installer or `fk setup`. Podman with its small Linux machine takes about 1–2 GB.
 
 **Windows** (PowerShell):
 
@@ -28,8 +28,8 @@ One command installs what the kit needs and is missing: git with Git LFS, Node.j
 - It checks what you have, shows **one plan** in plain words (what, why, size), asks **once**, installs only what is missing, sets each tool up and checks it works. It never uninstalls or downgrades anything and is safe to run again.
 - Versions are pinned in [`plugins/founder-kit/compat.lock.json`](plugins/founder-kit/compat.lock.json) (for example OMC 5.7.2, gitleaks 8.30.1, Node 24 LTS).
 - Every change is logged with its undo command in `~/.fk/install-ledger.jsonl`; what you already had is logged as yours and never touched.
-- Steps only you can do are shown with the exact command and stay on your to-do list: on Windows, WSL2 for Podman (administrator rights and a restart); everywhere, `gh auth login`.
-- Preview without changes: `-DryRun` / `--dry-run` (piped: `$env:FK_DRY_RUN='1'` first, or `| bash -s -- --dry-run`). Skip the question: `-Yes` / `--yes`.
+- Steps only you can do are shown with the exact command and stay on your to-do list: on Windows, WSL2 for Podman (administrator rights and a restart); with the GitHub CLI, `gh auth login`.
+- Preview without changes: `-DryRun` / `--dry-run` (piped: `$env:FK_DRY_RUN='1'` first, or `| bash -s -- --dry-run`). Skip the question: `-Yes` / `--yes`. Optional tools: `-With gh,mise` / `--with gh,mise`, `-All` / `--all` (piped: `$env:FK_WITH='gh,mise'`, `FK_WITH=all`).
 
 **Already have Claude Code?** Inside it run `/plugin marketplace add nothingbadhappened/awesome-founder-kit` and `/plugin install founder-kit@awesome-founder-kit`, then say **"Start my project with fk-start"**. Its first step runs `fk setup`, which installs the rest the same way (it adds the OMC plugin only when OMC is missing and keeps an npm install of OMC as it is).
 
@@ -39,7 +39,7 @@ Open Claude Code in an empty folder and say **"Start my project with fk-start."*
 
 | Step | What happens | You get |
 |---|---|---|
-| 0. Base tools | `fk setup` | Everything above, installed and checked |
+| 0. Base tools | `fk setup` | The core tools above, installed and checked |
 | 1. Record | `fk init`; OMC's autopilot/ralph stay off until step 3 is done | Git, guards, project folders |
 | 2. Idea | `fk-idea-import` (chat link, export, notes, voice memo) | `docs/00-source.md`: your brainstorm, in full |
 | 3. Non-negotiables | `fk-kickoff` | Market, platforms, red lines, budget in `docs/00-constraints.md` |
@@ -77,13 +77,13 @@ An add-on that brings its own workflow, hooks or rewrites of CLAUDE.md is cut do
 - **Risk class from the change.** `fk risk` proposes R0–R3 from the actual diff (auth, money, migrations, infrastructure, CI and gate files, new dependencies, API contracts, your impact map). Agents may raise a class, never lower it.
 - **Acceptance criteria, independent reviews.** `fk task new` writes `docs/tasks/<id>.md` with checkable criteria (or takes them from an OMC plan or PRD). Each review carries the `fk task stamp` of the exact version it saw; a review of an older version does not count. `fk task done` closes a task only with reviews from agents that wrote no code for it: none at R0, one at R1; from R2 the code and security reviewers, every criterion PASS with evidence and every cited ADR answered; at R3 also the critic and two rounds. Nothing blocks work in progress.
 - **Is it paying off?** `fk metrics` shows per task the estimated tokens and cost, time to done, rework, regressions, and what guards and reviews caught versus your overrides (likely false alarms).
-- **Memory.** codebase-memory-mcp maps the code; MemPalace keeps history; decisions and lessons live in your repo.
+- **Memory.** Decisions and lessons live in your repo; when installed, codebase-memory-mcp maps the code and MemPalace keeps history.
 
 ## Spending, cleanup, portability
 
 - **Spending caps, only if you pay for cloud or API services.** `fk budget plan <provider> <usd>` writes the steps and budget-as-code (it never applies anything), preferring providers with real hard caps; you record the cap with `fk-approve budget …`; `fk budget check` reads caps back where the provider allows. Resource-creating cloud commands need a recorded budget, then your yes.
 - **Nothing left running.** Agents record what they start (`fk ledger add`); `fk sweep` stops or removes only this project's recorded or labelled items, never by name, data only on request.
-- **Portable from day one.** A fresh clone must run with `just setup` and `just check`: tools pinned with mise, services in containers, lockfiles committed, nothing machine-specific. `fk portability check` shows the gaps (including a missing fresh-clone CI job); `fk portability init` adds the kit's justfile and fresh-clone CI job (never over an existing file).
+- **Portable from day one.** A fresh clone must run with the project's own setup and check commands, whatever its stack uses: runtimes pinned the way that ecosystem does, services reachable, lockfiles committed, nothing machine-specific. `fk portability check` shows the gaps; it never asks for a particular tool.
 
 ## Guards, and how strong they really are
 
@@ -136,14 +136,14 @@ Packs for common stacks, loaded only when needed: `fk-practice-core` (standards,
 
 ## Evidence
 
-- **Automated tests** (`plugins/founder-kit/tests/`): guards with planted and clean events, the CLI, adoption and knowledge consolidation, setup, install ledger, uninstall and update (570 tests, run in temporary folders with fakes, no real installs). CI runs them on Ubuntu and Windows, validates the marketplace and every plugin with `claude plugin validate --strict`, and scans the repo with gitleaks.
+- **Automated tests** (`plugins/founder-kit/tests/`): guards with planted and clean events, the CLI, adoption and knowledge consolidation, setup, install ledger, uninstall and update (614 tests, run in temporary folders with fakes, no real installs). CI runs them on Ubuntu and Windows, validates the marketplace and every plugin with `claude plugin validate --strict`, and scans the repo with gitleaks.
 - **Real-install smoke tests** (`.github/workflows/smoke.yml`): on every push to main and weekly, the one-line installer on a fresh Ubuntu 24.04 container and on macOS (Podman skipped there), a dry run on Windows, then `fk doctor --hooks`, `fk init` and planted guard events.
 - **Agent-quality A/B suite** ([evals/README.md](evals/README.md)): the same prompts and model with the kit, with no plugin and with OMC alone, on traps such as crossing an ADR boundary, loosening a gate to get green, an unpinned global install, or closing a task after a post-review change, with a fixed pass bar. `bash evals/run.sh validate` checks the suite for free. **The paid runs have not been published yet**, so the pass bar is a target, not a result.
 
 ## The rules that make it work
 
 1. **Write everything to files.** Agents forget; files don't.
-2. **Front-load your constraints.** A correction sent mid-task often arrives too late.
+2. **Front-load your constraints.** A correction sent mid-task often arrives too late. The rules the product must always keep are numbered (`BR-1`, `BR-2`…); every review answers each one, and a violation stops the task from closing.
 3. **Decisions become ADRs.** No re-arguing; changes are explicit.
 4. **Never self-approve.** The reviewer is never the agent that wrote the change.
 5. **Checks are code, not promises.** Each is shown failing once before it counts and is never loosened without your approval.
@@ -151,7 +151,7 @@ Packs for common stacks, loaded only when needed: `fk-practice-core` (standards,
 7. **Ask what a bad actor could do:** from R2 (and at every entry point) a threat model, abuse cases and one test per real threat.
 8. **Nothing left running, no surprise bills:** record what you start, sweep by record, cap paid services at the provider.
 9. **Log failures honestly.** That is where the method improves.
-10. **Portable from day one:** a fresh clone runs with `just setup` and `just check`.
+10. **Portable from day one:** a fresh clone runs with the project's own setup and check commands.
 
 ## Command reference
 
@@ -159,7 +159,7 @@ Agents run most of these for you; you rarely type them.
 
 | Command | Purpose |
 |---|---|
-| `fk setup` | Install and check the base tools (`--dry-run`, `--yes`) |
+| `fk setup` | Install and check the core tools; optional ones with `--with <id,id>` or `--all` (`--dry-run`, `--yes`) |
 | `fk doctor [--hooks]` | Health check, including guard strength; `--hooks` replays planted guard events |
 | `fk init [--chain]` / `fk uninstall [--system]` | Put the kit into a project / take it out (of the project, or of the computer) |
 | `fk update` | Show what changed and update the kit after one yes |

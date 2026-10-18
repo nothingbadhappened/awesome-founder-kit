@@ -8,12 +8,12 @@ description: Use before any {{Project}} code, schema, infra, UI or refactor chan
 OMC runs the workflow; this adds {{Project}} rules. Truth (overrides memory): `docs/00-constraints.md`, `docs/adr/` (latest accepted wins), `docs/standards/*`, `docs/process/lessons.md`.{{#if ui}} UI: `design-system/` + `{{project}}-design`.{{/if}} Contradicting an accepted ADR: stop; supersede only with founder approval.
 
 ## Facts
-Runner `{{runner}}`. Modules: {{modules}}. Feature branches only.
+Check `{{check}}`; setup `{{setup}}`; commands live in {{commands_file}}. Modules: {{modules}}. Feature branches only.
 
 ## Flow
 1. `oh-my-claudecode:omc-plan`, then `fk task new "<title>" --risk <Rn>` (or `--from-omc <plan or prd.json>`): `docs/tasks/<id>.md` with checkable `AC-n` lines.
 2. `oh-my-claudecode:tdd` at planned seams; `oh-my-claudecode:execute` per slice.
-3. `oh-my-claudecode:verify` with `{{runner}} check`; changed user flow → one `e2e` run of the whole flow.{{#if ml}} AI/ML: `eval` within baseline.{{/if}}
+3. `oh-my-claudecode:verify` with `{{check}}`; changed user flow → one `e2e` run of the whole flow.{{#if ml}} AI/ML: `eval` within baseline.{{/if}}
 4. `oh-my-claudecode:omc-review`, agents per risk, lens `fk-conformance`. Critical/high/medium block.
 5. Commit each slice green on all gates; `fk-journal`. Close: `fk task done <id>`. Push outside ralph/autopilot (OMC's git guardrails block `git push` there).
 
@@ -25,8 +25,8 @@ Runner `{{runner}}`. Modules: {{modules}}. Feature branches only.
 | R2 | cross-module, schema, money, new dependency/vendor, UI flow | code-reviewer + security-reviewer; every AC PASS with evidence |
 | R3 | {{r3_areas}} | R2 + critic on the plan, second round |
 
-## Bootstrap mode (while any `{{runner}}` target in `docs/standards/portability.md` is missing)
-Acceptance = missing gates in order: runner + config + env example → `check` → local stack → migrations → CI → e2e smoke. Missing: `GATE-MISSING: <target>`, never "N/A". Bootstrap, security, schema: second review round; re-prove changed gates after each.
+## Bootstrap mode (while any command listed in `docs/standards/portability.md` is missing)
+Acceptance = missing gates in order: commands + config + env example → `check` → local stack → migrations → CI → e2e smoke. Missing: `GATE-MISSING: <target>`, never "N/A". Bootstrap, security, schema: second review round; re-prove changed gates after each.
 
 ## Gates
 - A gate counts only after failing on a planted violation, run non-interactively (`CI=true`, no TTY); quote the failure.
